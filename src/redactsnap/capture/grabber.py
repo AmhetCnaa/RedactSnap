@@ -80,7 +80,7 @@ class ScreenGrabber:
 
     @classmethod
     def pil_to_pixmap(cls, pil_image: Image.Image) -> QPixmap:
-        """Converts a PIL Image (RGB or RGBA) to a QPixmap."""
+        """Converts a PIL Image (RGB or RGBA) to a QPixmap with memory-safe deep buffer copy."""
         if pil_image.mode != "RGBA":
             pil_image = pil_image.convert("RGBA")
         data = pil_image.tobytes("raw", "RGBA")
@@ -88,8 +88,9 @@ class ScreenGrabber:
             data,
             pil_image.width,
             pil_image.height,
+            pil_image.width * 4,
             QImage.Format.Format_RGBA8888,
-        )
+        ).copy()
         return QPixmap.fromImage(qimage)
 
     @classmethod

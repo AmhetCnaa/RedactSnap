@@ -60,27 +60,40 @@ class RapidOCREngine:
     _lock: threading.Lock = threading.Lock()
 
     def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                if RapidOCR is not None:
-                    try:
-                        cls._engine = RapidOCR()
-                    except Exception:
-                        cls._engine = None
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._engine = None
         return cls._instance
+
+    @classmethod
+    def _ensure_initialized(cls) -> Optional[RapidOCR]:
+        """Lazily initializes the RapidOCR ONNX models under lock in a background thread."""
+        with cls._lock:
+            if cls._engine is None and RapidOCR is not None:
+                try:
+                    cls._engine = RapidOCR()
+                except Exception:
+                    cls._engine = None
+            return cls._engine
 
     @property
     def is_available(self) -> bool:
-        return self._engine is not None
+        if RapidOCR is None:
+            return False
+        if self._engine is not None:
+            return True
+        return RapidOCR is not None
 
     def warmup(self):
         """Pre-warms the ONNX runtime session to avoid cold-start lag."""
-        if self.is_available:
+        engine = self._ensure_initialized()
+        if engine is not None:
             with self._lock:
                 try:
                     dummy = np.zeros((32, 32, 3), dtype=np.uint8)
-                    self._engine(dummy)
+                    engine(dummy)
                 except Exception:
                     pass
 
@@ -90,7 +103,8 @@ class RapidOCREngine:
         adaptive preprocessing (OpenCV Bilinear scaling + contrast enhancement)
         optimizing both latency and recognition accuracy on small UI fonts.
         """
-        if not self.is_available:
+        engine = self._ensure_initialized()
+        if engine is None:
             return []
 
         if isinstance(image, np.ndarray):
@@ -122,7 +136,7 @@ class RapidOCREngine:
         processed_arr = cv2.convertScaleAbs(processed_arr, alpha=1.2, beta=-5)
 
         with self._lock:
-            raw_results, _ = self._engine(processed_arr)
+            raw_results, _ = engine(processed_arr)
         if not raw_results:
             return []
 

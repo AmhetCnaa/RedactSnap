@@ -51,6 +51,6 @@ class RedactionWorker(QThread):
                 return
 
             self.finished.emit(self.scan_id, redacted_img, targets)
-        except Exception as e:
+        except BaseException as e:
             if not self._is_aborted:
                 self.failed.emit(self.scan_id, str(e))

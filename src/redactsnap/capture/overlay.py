@@ -110,6 +110,7 @@ class SnippingOverlay(QWidget):
         # Async background redaction state
         self._current_scan_id: int = 0
         self._redaction_worker: Optional[RedactionWorker] = None
+        self._stale_workers: List[RedactionWorker] = []
         self._is_scanning: bool = False
 
         # Annotations state
@@ -395,7 +396,7 @@ class SnippingOverlay(QWidget):
                 self._cached_composite_pixmap = None
 
                 if self._is_redacted:
-                    self._start_async_redaction()
+                    self._start_async_redaction(self._base_cropped_pixmap)
 
                 self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
                 self.update()
@@ -438,16 +439,42 @@ class SnippingOverlay(QWidget):
         return self._cached_composite_pixmap
 
     def _abort_active_redaction_scan(self):
-        """Aborts active background worker so outdated scan results are cleanly dropped."""
-        if self._redaction_worker is not None and self._redaction_worker.isRunning():
-            self._redaction_worker.abort()
-            self._redaction_worker.wait(100)
+        """Aborts active background worker safely without QThread GC crash."""
+        if self._redaction_worker is not None:
+            worker = self._redaction_worker
             self._redaction_worker = None
+            worker.abort()
+            try:
+                worker.finished.disconnect()
+            except Exception:
+                pass
+            try:
+                worker.failed.disconnect()
+            except Exception:
+                pass
+
+            if worker.isRunning():
+                self._stale_workers.append(worker)
+
+                def _cleanup_stale(w=worker):
+                    if w in self._stale_workers:
+                        self._stale_workers.remove(w)
+                    w.deleteLater()
+
+                worker.finished.connect(_cleanup_stale)
+            else:
+                worker.deleteLater()
+
         self._is_scanning = False
 
-    def _start_async_redaction(self, cropped_pixmap: QPixmap):
+    def _start_async_redaction(self, cropped_pixmap: Optional[QPixmap] = None):
         """Launches OCR and secret detection asynchronously in a background QThread."""
         self._abort_active_redaction_scan()
+
+        if cropped_pixmap is None:
+            if self._base_cropped_pixmap is None:
+                self._base_cropped_pixmap = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+            cropped_pixmap = self._base_cropped_pixmap
 
         if self._redaction_pipeline is None:
             self._redaction_pipeline = RedactionPipeline()
@@ -459,10 +486,24 @@ class SnippingOverlay(QWidget):
         self._is_scanning = True
         self.toolbar.btn_redact.setText("⏳ Scanning...")
 
-        self._redaction_worker = RedactionWorker(scan_id, pil_img, self._redaction_pipeline, parent=self)
-        self._redaction_worker.finished.connect(self._on_redaction_worker_finished)
-        self._redaction_worker.failed.connect(self._on_redaction_worker_failed)
-        self._redaction_worker.start()
+        worker = RedactionWorker(scan_id, pil_img, self._redaction_pipeline, parent=self)
+        self._redaction_worker = worker
+
+        def _on_finished(s_id, redacted_pil, targets):
+            self._on_redaction_worker_finished(s_id, redacted_pil, targets)
+            if self._redaction_worker is worker:
+                self._redaction_worker = None
+            worker.deleteLater()
+
+        def _on_failed(s_id, err_msg):
+            self._on_redaction_worker_failed(s_id, err_msg)
+            if self._redaction_worker is worker:
+                self._redaction_worker = None
+            worker.deleteLater()
+
+        worker.finished.connect(_on_finished)
+        worker.failed.connect(_on_failed)
+        worker.start()
 
     def _on_redaction_worker_finished(self, scan_id: int, redacted_pil: Image.Image, targets: list):
         if scan_id != self._current_scan_id:
@@ -934,6 +975,11 @@ class SnippingOverlay(QWidget):
             except Exception:
                 pass
         self._abort_active_redaction_scan()
+        for w in list(self._stale_workers):
+            if w.isRunning():
+                w.abort()
+                w.wait(200)
+        self._stale_workers.clear()
         self.cancelled.emit()
         self.close()
 
@@ -949,4 +995,9 @@ class SnippingOverlay(QWidget):
             except Exception:
                 pass
         self._abort_active_redaction_scan()
+        for w in list(self._stale_workers):
+            if w.isRunning():
+                w.abort()
+                w.wait(200)
+        self._stale_workers.clear()
         super().closeEvent(event)

@@ -50,8 +50,8 @@ class SystemTrayManager(QObject):
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
 
-        self.auto_redact_enabled = True
-        self.selected_preset_id = "obsidian"
+        self.auto_redact_enabled = False
+        self.selected_preset_id = "off"
 
         self.tray_icon = QSystemTrayIcon(parent)
         self.icon_pixmap = create_tray_icon_pixmap()

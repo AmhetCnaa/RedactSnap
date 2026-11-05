@@ -128,3 +128,32 @@ def test_overlay_mouse_and_keyboard_interaction(qapp):
     screenshots_dir = overlay.get_default_screenshots_dir()
     assert screenshots_dir.exists()
     assert screenshots_dir.is_dir()
+
+
+def test_pil_to_pixmap_memory_safety(qapp):
+    from PIL import Image
+    for i in range(10):
+        # Create image that gets garbage-collected immediately
+        img = Image.new("RGBA", (50, 50), color=(i * 20, 100, 200, 255))
+        pixmap = ScreenGrabber.pil_to_pixmap(img)
+        assert not pixmap.isNull()
+        assert pixmap.width() == 50
+        assert pixmap.height() == 50
+
+
+def test_overlay_stale_workers_management(qapp):
+    pixmap = QPixmap(200, 200)
+    pixmap.fill()
+    overlay = SnippingOverlay(pixmap, QRect(0, 0, 200, 200))
+    overlay.selection_rect = QRect(10, 10, 80, 80)
+
+    assert len(overlay._stale_workers) == 0
+    overlay._start_async_redaction()
+    assert overlay._redaction_worker is not None
+    assert overlay._is_scanning is True
+
+    # Abort while running
+    overlay._abort_active_redaction_scan()
+    assert overlay._redaction_worker is None
+    assert overlay._is_scanning is False
+    overlay.close()
