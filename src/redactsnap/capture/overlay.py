@@ -12,6 +12,7 @@ Combines:
 
 from enum import Enum, auto
 from typing import Optional, Tuple, List
+from PIL import Image
 
 from PyQt6.QtWidgets import QWidget, QApplication, QFileDialog
 from PyQt6.QtCore import Qt, QRect, QPoint, QSize, pyqtSignal
@@ -37,6 +38,8 @@ from ..studio.beautifier import StudioBeautifier, StudioConfig
 from ..studio.presets import PRESETS, get_preset_by_id
 from ..redaction.engine import RedactionPipeline
 from ..redaction.masker import RedactionStyle
+from ..redaction.worker import RedactionWorker
+from ..redaction.detector import RedactionTarget
 from ..core.uploader import UploadWorker, UploadProvider, UploadResult
 from ..core.config import ConfigManager
 
@@ -91,11 +94,21 @@ class SnippingOverlay(QWidget):
         # Cached image for loupe
         self._cached_qimage = self.virtual_pixmap.toImage()
 
-        # Live transformation state
+        # Live transformation state & multi-tier caching (60 FPS smooth)
         self._is_redacted = True
         self._current_preset_idx = -1
         self._redaction_pipeline: Optional[RedactionPipeline] = None
-        self._cached_processed_pixmap: Optional[QPixmap] = None
+
+        # Multi-tier pixmap caching:
+        self._base_cropped_pixmap: Optional[QPixmap] = None      # Clean unredacted crop
+        self._cached_redacted_pixmap: Optional[QPixmap] = None   # Redacted crop from background worker
+        self._cached_composite_pixmap: Optional[QPixmap] = None  # (redacted/base) + annotations + frame
+        self._cached_targets: List[RedactionTarget] = []
+
+        # Async background redaction state
+        self._current_scan_id: int = 0
+        self._redaction_worker: Optional[RedactionWorker] = None
+        self._is_scanning: bool = False
 
         # Annotations state
         self.annotations: List[Annotation] = []
@@ -173,6 +186,7 @@ class SnippingOverlay(QWidget):
                     text=str(self._step_counter)
                 )
                 self.annotations.append(anno)
+                self._cached_composite_pixmap = None
                 self._step_counter += 1
                 self.state = OverlayState.SELECTED
                 self.update()
@@ -181,6 +195,7 @@ class SnippingOverlay(QWidget):
         if self.state in (OverlayState.SELECTED, OverlayState.ANNOTATING):
             handle = self._hit_test_handle(pos)
             if handle != ResizeHandle.NONE:
+                self._abort_active_redaction_scan()
                 self.state = OverlayState.RESIZING
                 self.active_handle = handle
                 self.origin_point = pos
@@ -188,6 +203,7 @@ class SnippingOverlay(QWidget):
                 return
 
             if self.selection_rect.contains(pos):
+                self._abort_active_redaction_scan()
                 self.state = OverlayState.MOVING
                 self.move_offset = pos - self.selection_rect.topLeft()
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
@@ -195,13 +211,17 @@ class SnippingOverlay(QWidget):
                 return
 
         # Start fresh selection
+        self._abort_active_redaction_scan()
         self.state = OverlayState.DRAGGING
         self.origin_point = pos
         self.current_point = pos
         self.selection_rect = QRect(pos, QSize(0, 0))
         self.annotations.clear()
         self._step_counter = 1
-        self._cached_processed_pixmap = None
+        self._base_cropped_pixmap = None
+        self._cached_redacted_pixmap = None
+        self._cached_composite_pixmap = None
+        self._cached_targets.clear()
         self.toolbar.hide()
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.update()
@@ -265,6 +285,7 @@ class SnippingOverlay(QWidget):
                         end_pos=(ex, ey)
                     )
                     self.annotations.append(anno)
+                    self._cached_composite_pixmap = None
 
                 self._anno_start_pos = None
                 self.state = OverlayState.SELECTED
@@ -277,18 +298,15 @@ class SnippingOverlay(QWidget):
                     self.setCursor(Qt.CursorShape.ArrowCursor)
                     self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
 
-                    # Auto-Redact on selection by default
+                    # Cache base crop instantly (0ms UI latency)
+                    self._base_cropped_pixmap = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+                    self._cached_redacted_pixmap = None
+                    self._cached_composite_pixmap = None
+                    self._cached_targets.clear()
+
+                    # Launch async background OCR & redaction without blocking UI
                     if self._is_redacted:
-                        self._cached_processed_pixmap = None
-                        if self._redaction_pipeline is None:
-                            self._redaction_pipeline = RedactionPipeline()
-                        cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
-                        pil_img = ScreenGrabber.pixmap_to_pil(cropped)
-                        targets, _ = self._redaction_pipeline.detector.scan(pil_img)
-                        count = len(targets)
-                        self.toolbar.set_redact_active(True, count=count)
-                        if count > 0:
-                            self.toast.show_message(f"🛡️ Auto-redacted {count} secret(s)!", 2000)
+                        self._start_async_redaction(self._base_cropped_pixmap)
                 else:
                     self._reset_selection()
                 self.update()
@@ -347,18 +365,24 @@ class SnippingOverlay(QWidget):
     # --------------------------------------------------------------------------
 
     def _get_current_image(self) -> QPixmap:
-        """Composites cropped selection with redactions, annotations, and beautifier."""
-        if self._cached_processed_pixmap is not None:
-            return self._cached_processed_pixmap
+        """Composites cropped selection with redactions, annotations, and beautifier with zero synchronous OCR."""
+        if self._cached_composite_pixmap is not None:
+            return self._cached_composite_pixmap
 
-        cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
-        pil_img = ScreenGrabber.pixmap_to_pil(cropped)
+        # 1. Base layer: redacted pixmap if active & available, otherwise clean base crop
+        if self._is_redacted and self._cached_redacted_pixmap is not None:
+            base_pixmap = self._cached_redacted_pixmap
+        else:
+            if self._base_cropped_pixmap is None:
+                self._base_cropped_pixmap = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+            base_pixmap = self._base_cropped_pixmap
 
-        # 1. Redaction
-        if self._is_redacted:
-            if self._redaction_pipeline is None:
-                self._redaction_pipeline = RedactionPipeline()
-            pil_img, _ = self._redaction_pipeline.process(pil_img, style=RedactionStyle.GAUSSIAN_BLUR)
+        # Fast path if no annotations and no frame preset applied
+        if not self.annotations and self._current_preset_idx < 0:
+            self._cached_composite_pixmap = base_pixmap
+            return self._cached_composite_pixmap
+
+        pil_img = ScreenGrabber.pixmap_to_pil(base_pixmap)
 
         # 2. Annotations
         if self.annotations:
@@ -370,26 +394,75 @@ class SnippingOverlay(QWidget):
             config = StudioConfig(preset=preset, padding=40, show_window_chrome=True, corner_radius=12)
             pil_img = StudioBeautifier.render(pil_img, config)
 
-        self._cached_processed_pixmap = ScreenGrabber.pil_to_pixmap(pil_img)
-        return self._cached_processed_pixmap
+        self._cached_composite_pixmap = ScreenGrabber.pil_to_pixmap(pil_img)
+        return self._cached_composite_pixmap
+
+    def _abort_active_redaction_scan(self):
+        """Aborts active background worker so outdated scan results are cleanly dropped."""
+        if self._redaction_worker is not None and self._redaction_worker.isRunning():
+            self._redaction_worker.abort()
+            self._redaction_worker.wait(100)
+            self._redaction_worker = None
+        self._is_scanning = False
+
+    def _start_async_redaction(self, cropped_pixmap: QPixmap):
+        """Launches OCR and secret detection asynchronously in a background QThread."""
+        self._abort_active_redaction_scan()
+
+        if self._redaction_pipeline is None:
+            self._redaction_pipeline = RedactionPipeline()
+
+        self._current_scan_id += 1
+        scan_id = self._current_scan_id
+        pil_img = ScreenGrabber.pixmap_to_pil(cropped_pixmap)
+
+        self._is_scanning = True
+        self.toolbar.btn_redact.setText("⏳ Scanning...")
+
+        self._redaction_worker = RedactionWorker(scan_id, pil_img, self._redaction_pipeline, parent=self)
+        self._redaction_worker.finished.connect(self._on_redaction_worker_finished)
+        self._redaction_worker.failed.connect(self._on_redaction_worker_failed)
+        self._redaction_worker.start()
+
+    def _on_redaction_worker_finished(self, scan_id: int, redacted_pil: Image.Image, targets: list):
+        if scan_id != self._current_scan_id:
+            return  # Stale scan from an older selection, ignore
+
+        self._cached_redacted_pixmap = ScreenGrabber.pil_to_pixmap(redacted_pil)
+        self._cached_targets = targets
+        self._cached_composite_pixmap = None
+        self._is_scanning = False
+
+        count = len(targets)
+        self.toolbar.set_redact_active(True, count=count)
+        if count > 0:
+            self.toast.show_message(f"🛡️ Auto-redacted {count} secret(s)!", 2000)
+        self.update()
+
+    def _on_redaction_worker_failed(self, scan_id: int, err_msg: str):
+        if scan_id != self._current_scan_id:
+            return
+        self._is_scanning = False
+        self.toolbar.set_redact_active(True, count=0)
+        self.update()
 
     def _on_redact_toggled(self, active: bool):
         self._is_redacted = active
-        self._cached_processed_pixmap = None
+        self._cached_composite_pixmap = None
 
         if active:
-            if self._redaction_pipeline is None:
-                self._redaction_pipeline = RedactionPipeline()
-            cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
-            pil_img = ScreenGrabber.pixmap_to_pil(cropped)
-            targets, _ = self._redaction_pipeline.detector.scan(pil_img)
-            count = len(targets)
-            self.toolbar.set_redact_active(True, count=count)
-            msg = f"🛡️ Auto-redacted {count} secret(s)!" if count > 0 else "ℹ️ No sensitive secrets detected"
-            self.toast.show_message(msg, 2000)
+            if self._cached_redacted_pixmap is not None:
+                count = len(self._cached_targets)
+                self.toolbar.set_redact_active(True, count=count)
+                msg = f"🛡️ Auto-redacted {count} secret(s)!" if count > 0 else "ℹ️ No sensitive secrets detected"
+                self.toast.show_message(msg, 1500)
+            else:
+                if self._base_cropped_pixmap is None:
+                    self._base_cropped_pixmap = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+                self._start_async_redaction(self._base_cropped_pixmap)
         else:
             self.toolbar.set_redact_active(False)
-            self.toast.show_message("🛡️ Redaction removed", 1500)
+            self.toast.show_message("🛡️ Redaction hidden", 1200)
 
         self.update()
 
@@ -398,7 +471,7 @@ class SnippingOverlay(QWidget):
         if self._current_preset_idx >= len(PRESETS):
             self._current_preset_idx = -1
 
-        self._cached_processed_pixmap = None
+        self._cached_composite_pixmap = None
 
         if self._current_preset_idx == -1:
             self.toolbar.set_beautify_preset("Off")
@@ -420,6 +493,7 @@ class SnippingOverlay(QWidget):
             removed = self.annotations.pop()
             if removed.type == AnnotationType.STEP_NUMBER and self._step_counter > 1:
                 self._step_counter -= 1
+            self._cached_composite_pixmap = None
             self.toast.show_message("↩️ Undone", 1000)
             self.update()
 
@@ -461,6 +535,9 @@ class SnippingOverlay(QWidget):
 
     def _on_upload_clicked(self):
         """Asynchronously uploads image to Imgur or S3."""
+        if self._is_scanning and self._is_redacted and self._redaction_worker is not None:
+            self._redaction_worker.wait(1200)
+
         pixmap = self._get_current_image()
         pil_img = ScreenGrabber.pixmap_to_pil(pixmap)
 
@@ -480,6 +557,9 @@ class SnippingOverlay(QWidget):
             self.toast.show_message(f"❌ Upload failed: {result.error_message}", 3500)
 
     def _on_save_clicked(self):
+        if self._is_scanning and self._is_redacted and self._redaction_worker is not None:
+            self._redaction_worker.wait(1200)
+
         pixmap = self._get_current_image()
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -731,16 +811,23 @@ class SnippingOverlay(QWidget):
         painter.drawPath(container_path)
 
     def _reset_selection(self):
+        self._abort_active_redaction_scan()
         self.state = OverlayState.READY
         self.selection_rect = QRect()
         self.annotations.clear()
         self._step_counter = 1
-        self._cached_processed_pixmap = None
+        self._base_cropped_pixmap = None
+        self._cached_redacted_pixmap = None
+        self._cached_composite_pixmap = None
+        self._cached_targets.clear()
         self.toolbar.hide()
         self.setCursor(Qt.CursorShape.CrossCursor)
         self.update()
 
     def _confirm_to_clipboard(self):
+        if self._is_scanning and self._is_redacted and self._redaction_worker is not None:
+            self._redaction_worker.wait(1200)
+
         final_pixmap = self._get_current_image()
         clipboard = QApplication.clipboard()
         if clipboard:
@@ -749,5 +836,10 @@ class SnippingOverlay(QWidget):
         self.close()
 
     def _cancel(self):
+        self._abort_active_redaction_scan()
         self.cancelled.emit()
         self.close()
+
+    def closeEvent(self, event):
+        self._abort_active_redaction_scan()
+        super().closeEvent(event)

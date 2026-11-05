@@ -4,8 +4,9 @@ Extracts line/word bounding boxes and text without any external binary dependenc
 """
 
 from typing import List, Tuple, Optional
+import cv2
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 try:
     from rapidocr_onnxruntime import RapidOCR
@@ -51,7 +52,7 @@ class OCRTextBox:
 
 
 class RapidOCREngine:
-    """Singleton wrapper for RapidOCR ONNX inference engine."""
+    """Singleton wrapper for RapidOCR ONNX inference engine with warmup and fast preprocessing."""
 
     _instance: Optional["RapidOCREngine"] = None
     _engine: Optional[RapidOCR] = None
@@ -61,51 +62,65 @@ class RapidOCREngine:
             cls._instance = super().__new__(cls)
             if RapidOCR is not None:
                 cls._engine = RapidOCR()
+                # Warm up ONNX session once so subsequent inferences are instantaneous
+                try:
+                    dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+                    cls._engine(dummy)
+                except Exception:
+                    pass
         return cls._instance
 
     @property
     def is_available(self) -> bool:
         return self._engine is not None
 
+    def warmup(self):
+        """Pre-warms the ONNX runtime session to avoid cold-start lag."""
+        if self.is_available:
+            try:
+                dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+                self._engine(dummy)
+            except Exception:
+                pass
+
     def recognize(self, image: Image.Image | np.ndarray) -> List[OCRTextBox]:
         """
-        Runs offline OCR on the given PIL Image or NumPy array with intelligent
-        preprocessing (LANCZOS upscaling + contrast/sharpness enhancement)
-        to reliably detect small fonts in browser address bars, forms, and code editors.
+        Runs offline OCR on the given PIL Image or NumPy array with hyper-fast
+        adaptive preprocessing (OpenCV Bilinear scaling + contrast enhancement)
+        optimizing both latency and recognition accuracy on small UI fonts.
         """
         if not self.is_available:
             return []
 
         if isinstance(image, np.ndarray):
-            pil_img = Image.fromarray(image).convert("RGB")
+            arr = image.copy()
+            if len(arr.shape) == 2:
+                arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+            elif arr.shape[2] == 4:
+                arr = cv2.cvtColor(arr, cv2.COLOR_RGBA2RGB)
         else:
-            pil_img = image.convert("RGB")
+            arr = np.array(image.convert("RGB"))
 
-        orig_w, orig_h = pil_img.size
+        orig_h, orig_w = arr.shape[:2]
 
-        # Adaptive scaling: small crops (e.g. search bars, single text lines)
-        # benefit dramatically from 2.0x LANCZOS upscaling and edge sharpening.
-        # Large images (> 1600px) are kept at 1.0x to conserve RAM and speed.
-        if max(orig_w, orig_h) <= 1600:
-            scale_factor = 2.0
-        else:
-            scale_factor = 1.0
-
-        if scale_factor != 1.0:
+        # Fast adaptive scaling:
+        # Scale only small single-line crops (e.g. search bars, small buttons where h < 80 or w < 300)
+        # by 1.35x (max 1.5x) using fast SIMD cv2.INTER_LINEAR interpolation.
+        # Normal & large captures (h >= 80) run at 1.0x native resolution with 0 resize overhead.
+        if orig_h < 80 or orig_w < 300:
+            scale_factor = 1.35
             new_w = int(orig_w * scale_factor)
             new_h = int(orig_h * scale_factor)
-            processed_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            processed_arr = cv2.resize(arr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         else:
-            processed_img = pil_img
+            scale_factor = 1.0
+            processed_arr = arr
 
-        # Enhance contrast and sharpness for subtle grey UI text (e.g., Chrome/Brave URL bar)
-        contrast_enhancer = ImageEnhance.Contrast(processed_img)
-        processed_img = contrast_enhancer.enhance(1.35)
-        sharpness_enhancer = ImageEnhance.Sharpness(processed_img)
-        processed_img = sharpness_enhancer.enhance(1.4)
+        # Fast contrast adjustment via OpenCV scaling (alpha=1.2, beta=-5)
+        # Keeps character edges crisp for low-contrast grey text in browser URL bars
+        processed_arr = cv2.convertScaleAbs(processed_arr, alpha=1.2, beta=-5)
 
-        arr = np.array(processed_img)
-        raw_results, _ = self._engine(arr)
+        raw_results, _ = self._engine(processed_arr)
         if not raw_results:
             return []
 

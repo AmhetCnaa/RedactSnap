@@ -193,3 +193,37 @@ def test_ocr_small_ui_text_preprocessing():
 
     assert len(targets) >= 1
     assert any("49012345678" in t.matched_text for t in targets)
+
+
+def test_rapid_ocr_warmup():
+    engine = RapidOCREngine()
+    # Calling warmup should execute with no exceptions
+    engine.warmup()
+    assert engine.is_available is True
+
+
+def test_redaction_worker_async(qapp):
+    from redactsnap.redaction.worker import RedactionWorker
+
+    img = Image.new("RGB", (300, 60), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((10, 15), "OpenAI: sk-proj-1234567890abcdef1234567890abcdef12345678", fill=(0, 0, 0))
+
+    pipeline = RedactionPipeline()
+    worker = RedactionWorker(scan_id=42, image=img, pipeline=pipeline)
+
+    results = []
+
+    def on_finished(scan_id, redacted_img, targets):
+        results.append((scan_id, redacted_img, targets))
+
+    worker.finished.connect(on_finished)
+    worker.start()
+    worker.wait(5000)
+    qapp.processEvents()
+
+    assert len(results) == 1
+    scan_id, redacted_img, targets = results[0]
+    assert scan_id == 42
+    assert isinstance(redacted_img, Image.Image)
+    assert len(targets) >= 1

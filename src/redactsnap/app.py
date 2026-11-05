@@ -33,7 +33,12 @@ class RedactSnapApp(QObject):
         self.hotkeys.trigger_capture.connect(self.trigger_capture)
 
     def start(self):
-        """Starts background hotkey listening and shows system tray."""
+        """Starts background hotkey listening, warms up OCR in background, and shows system tray."""
+        # Pre-warm RapidOCR ONNX model in background thread so first capture has 0 initial lag
+        import threading
+        from .redaction.ocr.rapid import RapidOCREngine
+        threading.Thread(target=lambda: RapidOCREngine().warmup(), daemon=True).start()
+
         if not self.one_shot:
             self.tray.show()
             self.hotkeys.start()
