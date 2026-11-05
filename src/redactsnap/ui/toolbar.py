@@ -38,13 +38,14 @@ class FloatingToolbar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
-        self._is_redacted = False
+        self._is_redacted = True
         self._current_preset_name = "Off"
         self._is_recording = False
         self._active_annotation_tool: Optional[AnnotationType] = None
         self._show_annotation_subbar = False
 
         self._init_ui()
+        self.set_redact_active(True)
 
     def _init_ui(self):
         root_layout = QVBoxLayout(self)

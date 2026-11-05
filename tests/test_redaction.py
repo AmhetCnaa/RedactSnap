@@ -123,3 +123,18 @@ def test_end_to_end_pipeline_with_ocr():
     sanitized_text = pipeline.copy_as_text(img, redact_secrets=True)
     assert "devops@security.io" not in sanitized_text
     assert "REDACTED" in sanitized_text
+
+
+def test_patterns_contextual_tckn():
+    p = next(p for p in PATTERNS if p.name == "Contextual Turkish ID (TCKN)")
+    test_cases = [
+        ("tc kimlik no: 12345678901", "12345678901"),
+        ("TC No: 99988877766", "99988877766"),
+        ("T.C. Kimlik No: 11111111111", "11111111111"),
+        ("tckn: 12345678901", "12345678901"),
+        ("kimlik no: 55544433322", "55544433322"),
+    ]
+    for text, expected_id in test_cases:
+        matches = p.find_matches(text)
+        assert len(matches) == 1, f"Failed to match: {text}"
+        assert expected_id in matches[0][2]

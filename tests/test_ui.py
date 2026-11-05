@@ -47,9 +47,10 @@ def test_floating_toolbar_actions(qapp):
     toolbar.btn_copy.click()
     assert len(copy_called) == 1
 
+    # Since redact is enabled by default, clicking it toggles it to False
     toolbar.btn_redact.click()
     assert len(redact_called) == 1
-    assert redact_called[0] is True
+    assert redact_called[0] is False
 
     toolbar.btn_beautify.click()
     assert len(beautify_called) == 1

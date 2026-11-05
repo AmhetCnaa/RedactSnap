@@ -92,7 +92,7 @@ class SnippingOverlay(QWidget):
         self._cached_qimage = self.virtual_pixmap.toImage()
 
         # Live transformation state
-        self._is_redacted = False
+        self._is_redacted = True
         self._current_preset_idx = -1
         self._redaction_pipeline: Optional[RedactionPipeline] = None
         self._cached_processed_pixmap: Optional[QPixmap] = None
@@ -276,6 +276,19 @@ class SnippingOverlay(QWidget):
                     self.state = OverlayState.SELECTED
                     self.setCursor(Qt.CursorShape.ArrowCursor)
                     self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
+
+                    # Auto-Redact on selection by default
+                    if self._is_redacted:
+                        self._cached_processed_pixmap = None
+                        if self._redaction_pipeline is None:
+                            self._redaction_pipeline = RedactionPipeline()
+                        cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+                        pil_img = ScreenGrabber.pixmap_to_pil(cropped)
+                        targets, _ = self._redaction_pipeline.detector.scan(pil_img)
+                        count = len(targets)
+                        self.toolbar.set_redact_active(True, count=count)
+                        if count > 0:
+                            self.toast.show_message(f"🛡️ Auto-redacted {count} secret(s)!", 2000)
                 else:
                     self._reset_selection()
                 self.update()
@@ -335,6 +348,9 @@ class SnippingOverlay(QWidget):
 
     def _get_current_image(self) -> QPixmap:
         """Composites cropped selection with redactions, annotations, and beautifier."""
+        if self._cached_processed_pixmap is not None:
+            return self._cached_processed_pixmap
+
         cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
         pil_img = ScreenGrabber.pixmap_to_pil(cropped)
 
@@ -354,7 +370,8 @@ class SnippingOverlay(QWidget):
             config = StudioConfig(preset=preset, padding=40, show_window_chrome=True, corner_radius=12)
             pil_img = StudioBeautifier.render(pil_img, config)
 
-        return ScreenGrabber.pil_to_pixmap(pil_img)
+        self._cached_processed_pixmap = ScreenGrabber.pil_to_pixmap(pil_img)
+        return self._cached_processed_pixmap
 
     def _on_redact_toggled(self, active: bool):
         self._is_redacted = active
@@ -496,8 +513,12 @@ class SnippingOverlay(QWidget):
 
         # 3. Selection cutout and preview
         if has_selection:
-            # Draw preview
-            painter.drawPixmap(self.selection_rect, self.virtual_pixmap, self.selection_rect)
+            if self._is_redacted or self._current_preset_idx >= 0:
+                # Live preview of redacted secrets and studio frame
+                processed = self._get_current_image()
+                painter.drawPixmap(self.selection_rect, processed)
+            else:
+                painter.drawPixmap(self.selection_rect, self.virtual_pixmap, self.selection_rect)
 
             # Draw live annotations
             if self.annotations:

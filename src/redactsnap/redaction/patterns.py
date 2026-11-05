@@ -24,7 +24,7 @@ def luhn_checksum_valid(card_number: str) -> bool:
 
 
 def tckn_valid(tckn: str) -> bool:
-    """Validates Turkish Citizen Identity Number (TCKN)."""
+    """Validates Turkish Citizen Identity Number (TCKN) checksum."""
     digits = [int(d) for d in re.sub(r"\D", "", tckn)]
     if len(digits) != 11 or digits[0] == 0:
         return False
@@ -57,7 +57,6 @@ class SecretPattern:
         """
         matches = []
         for match in self.regex.finditer(text):
-            # If pattern has capture group (e.g. key: <value>), use group 1
             if match.lastindex and match.lastindex >= 1:
                 start = match.start(1)
                 end = match.end(1)
@@ -145,8 +144,28 @@ PATTERNS: List[SecretPattern] = [
     ),
 
     # --------------------------------------------------------------------------
-    # Personal & Financial PII
+    # Personal & Financial PII (With Turkish Identity Support)
     # --------------------------------------------------------------------------
+    # 1. Contextual Turkish Identity: When "tc", "kimlik", "tckn" etc. appear nearby,
+    # match ANY 11-digit number regardless of checksum!
+    SecretPattern(
+        name="Contextual Turkish ID (TCKN)",
+        category="PII",
+        regex=r"(?i)(?:t\.?\s*c\.?\s*(?:kimlik)?(?:\s*no)?|tc\s*no|kimlik(?:\s*no)?|tckn|tcno|vatanda[sş]l[iı]k(?:\s*no)?)\s*[:=.\s-]*\s*([0-9](?:[\s.-]*[0-9]){10})\b"
+    ),
+    # 2. Mathematical TCKN: Standalone 11-digit number starting with 1-9 without keywords
+    SecretPattern(
+        name="Turkish Citizen ID (TCKN)",
+        category="PII",
+        regex=r"\b([1-9][0-9]{10})\b",
+        validator=tckn_valid
+    ),
+    # 3. Turkish Mobile Phone Number: 05XX XXX XX XX or +90 5XX...
+    SecretPattern(
+        name="Turkish Phone Number",
+        category="PII",
+        regex=r"(?:\+90\s*|0)?(5[0-9]{2}[\s.-]?[0-9]{3}[\s.-]?[0-9]{2}[\s.-]?[0-9]{2})\b"
+    ),
     SecretPattern(
         name="Email Address",
         category="PII",
@@ -162,12 +181,6 @@ PATTERNS: List[SecretPattern] = [
         name="IBAN",
         category="FINANCIAL",
         regex=r"\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7,26})\b"
-    ),
-    SecretPattern(
-        name="Turkish Citizen ID (TCKN)",
-        category="PII",
-        regex=r"\b([1-9][0-9]{10})\b",
-        validator=tckn_valid
     ),
 
     # --------------------------------------------------------------------------
