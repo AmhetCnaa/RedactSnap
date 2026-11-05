@@ -10,6 +10,13 @@ from redactsnap.app import RedactSnapApp
 
 
 def main():
+    if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(errors="replace")
+            sys.stderr.reconfigure(errors="replace")
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="RedactSnap: Privacy-first Screenshot Autopilot")
     subparsers = parser.add_subparsers(dest="command")
 

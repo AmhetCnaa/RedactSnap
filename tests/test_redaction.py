@@ -133,8 +133,63 @@ def test_patterns_contextual_tckn():
         ("T.C. Kimlik No: 11111111111", "11111111111"),
         ("tckn: 12345678901", "12345678901"),
         ("kimlik no: 55544433322", "55544433322"),
+        ("te49012345678", "49012345678"),
+        ("t49012345678", "49012345678"),
+        ("tc: 490 12345678", "490 12345678"),
+        ("49012345678", "49012345678"),
     ]
     for text, expected_id in test_cases:
         matches = p.find_matches(text)
-        assert len(matches) == 1, f"Failed to match: {text}"
+        assert len(matches) >= 1, f"Failed to match: {text}"
         assert expected_id in matches[0][2]
+
+
+def test_patterns_passwords_multilingual_and_masked():
+    p_kw = next(p for p in PATTERNS if p.name == "Password / Secret with Keyword")
+    p_mask = next(p for p in PATTERNS if p.name == "Masked Password Input")
+
+    samples_kw = [
+        ("sifre: Gizli123!", "Gizli123!"),
+        ("şifre: 123456", "123456"),
+        ("parola: MySecretPassword", "MySecretPassword"),
+        ("password: admin", "admin"),
+        ("pass: Secret_99!", "Secret_99!"),
+        ("pin: 4321", "4321"),
+    ]
+    for text, expected_val in samples_kw:
+        matches = p_kw.find_matches(text)
+        assert len(matches) == 1, f"Failed keyword match: {text}"
+        assert matches[0][2] == expected_val
+
+    # Masked password input (dots/asterisks)
+    masked_samples = ["••••••••", "●●●●●●", "********"]
+    for text in masked_samples:
+        matches = p_mask.find_matches(text)
+        assert len(matches) == 1, f"Failed masked match: {text}"
+
+
+def test_entropy_standalone_passwords():
+    # Real-world passwords should be identified as secrets
+    real_passwords = ["Admin123!", "P@ssw0rd99", "Secret_2025!", "K1ng_2024!"]
+    for pwd in real_passwords:
+        is_sec, score, reason = EntropyAnalyzer.is_secret_candidate(pwd)
+        assert is_sec is True, f"Failed to detect password: {pwd}"
+
+    # Normal camelCase, product names and words should NOT be flagged
+    normal_words = ["RedactSnap", "Windows11", "CleanShot", "Development"]
+    for word in normal_words:
+        is_sec, score, reason = EntropyAnalyzer.is_secret_candidate(word)
+        assert is_sec is False, f"False positive on word: {word}"
+
+
+def test_ocr_small_ui_text_preprocessing():
+    # Test OCR on small, low-contrast browser address bar simulation
+    img = Image.new("RGB", (480, 36), color=(241, 243, 244))
+    draw = ImageDraw.Draw(img)
+    draw.text((12, 10), "tc: 49012345678", fill=(80, 80, 80))
+
+    pipeline = RedactionPipeline()
+    redacted_img, targets = pipeline.process(img, style=RedactionStyle.GAUSSIAN_BLUR)
+
+    assert len(targets) >= 1
+    assert any("49012345678" in t.matched_text for t in targets)

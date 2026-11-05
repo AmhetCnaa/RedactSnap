@@ -75,19 +75,24 @@ class RedactionDetector:
                     matched_spans.append((start_idx, end_idx))
 
                     if self.debug:
-                        print(f"      -> 🛡️ MATCH [{pattern.category}] {pattern.name}: '{secret_text}' (sub-box: {sub_box})")
+                        print(f"      -> [SHIELD] MATCH [{pattern.category}] {pattern.name}: '{secret_text}' (sub-box: {sub_box})")
 
-            # 2. Contextual Fallback for Turkish ID in lines with keywords
-            has_id_keyword = bool(re.search(r"(?i)\b(?:tc|t\.c\.|kimlik|tckn|tcno|vatanda[sş]l[iı]k)\b", line_text))
+            # 2. Contextual Fallback for Turkish & Tolerant IDs in lines with keywords or prefixes
+            has_id_keyword = bool(
+                re.search(
+                    r"(?i)(?:\b(?:tc|t\.c\.|kimlik|tckn|tcno|vatanda[sş]l[iı]k|te|tr|id|no)\b|(?:^|[\s:])(?:t|tc|te|tr)[:\s-])",
+                    line_text
+                )
+            )
             if has_id_keyword:
-                # Find any 11-digit sequence in this line
-                for m in re.finditer(r"\b([0-9]{11})\b", line_text):
+                # Find any 10 or 11 digit sequence in this line (with optional spaces/dashes)
+                for m in re.finditer(r"(?<![0-9])([0-9](?:[\s.-]*[0-9]){9,10})(?![0-9])", line_text):
                     s_idx, e_idx = m.start(1), m.end(1)
                     already_covered = any(s <= s_idx and e_idx <= e for s, e in matched_spans)
                     if not already_covered:
                         sub_box = box.sub_bbox(s_idx, e_idx)
                         target = RedactionTarget(
-                            name="Contextual Turkish ID (TCKN)",
+                            name="Contextual Turkish ID / Tolerant ID",
                             category="PII",
                             matched_text=m.group(1),
                             bbox=sub_box,
@@ -96,7 +101,7 @@ class RedactionDetector:
                         targets.append(target)
                         matched_spans.append((s_idx, e_idx))
                         if self.debug:
-                            print(f"      -> 🛡️ CONTEXT MATCH [PII] Contextual Turkish ID: '{m.group(1)}' (sub-box: {sub_box})")
+                            print(f"      -> [SHIELD] CONTEXT MATCH [PII] Contextual ID: '{m.group(1)}' (sub-box: {sub_box})")
 
             # 3. Shannon Entropy Analysis for Unstructured Secrets
             entropy_matches = EntropyAnalyzer.scan_text(line_text)
@@ -119,13 +124,13 @@ class RedactionDetector:
                 targets.append(target)
 
                 if self.debug:
-                    print(f"      -> 🛡️ ENTROPY MATCH [SECRET] '{token}' (H={score:.2f}, {reason})")
+                    print(f"      -> [SHIELD] ENTROPY MATCH [SECRET] '{token}' (H={score:.2f}, {reason})")
 
         merged_targets = self._merge_overlapping_targets(targets)
 
         if self.debug:
             if merged_targets:
-                print(f"[RedactSnap] 🛡️ Total redacted secret(s): {len(merged_targets)}\n")
+                print(f"[RedactSnap] [SHIELD] Total redacted secret(s): {len(merged_targets)}\n")
             else:
                 print("[RedactSnap] Clean! No secrets detected.\n")
 

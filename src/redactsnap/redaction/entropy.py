@@ -52,8 +52,8 @@ class EntropyAnalyzer:
         length = len(token)
 
         # Must meet minimum length threshold
-        if length < 16:
-            return False, 0.0, "Too short (< 16 chars)"
+        if length < 8:
+            return False, 0.0, "Too short (< 8 chars)"
 
         # Check ignored structures (URLs, paths, namespaces)
         for pattern in cls.IGNORE_PATTERNS:
@@ -99,6 +99,12 @@ class EntropyAnalyzer:
         if re.fullmatch(r"[A-Za-z0-9+/=_-]+", token) and has_digit and (has_lower or has_upper):
             if length >= 24 and entropy >= 3.9:
                 return True, entropy, "High-entropy Base64 token"
+
+        # 4. Typical Standalone Password Pattern (8-15 chars, mixed classes e.g. Admin123!, P@ssw0rd99)
+        if 8 <= length < 16:
+            if has_digit and ((has_lower and has_upper) or has_special):
+                if char_classes >= 3 and (has_special or entropy >= 3.0):
+                    return True, entropy, f"Password-like token (classes={char_classes}, H={entropy:.2f})"
 
         return False, entropy, "Normal text distribution"
 

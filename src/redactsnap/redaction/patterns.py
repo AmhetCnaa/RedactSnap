@@ -138,29 +138,42 @@ PATTERNS: List[SecretPattern] = [
         regex=r"(-----BEGIN (?:RSA|EC|DSA|OPENSSH|PGP)?\s?PRIVATE KEY[^-]*-----)"
     ),
     SecretPattern(
-        name="Generic Password in Config",
+        name="Password / Secret with Keyword",
         category="PASSWORD",
-        regex=r"(?i)\b(?:password|passwd|secret|api_key|apikey|auth_token|bearer)\s*[:=]\s*[\"']?([^\s\"']{8,})[\"']?"
+        regex=r"(?i)\b(?:password|passwd|pass|pwd|şifre|sifre|parola|pin|gizli|secret|api_key|apikey|auth_token|bearer)\b\s*[:=.\s-]*\s*[\"']?([^\s\"']{3,})[\"']?"
+    ),
+    SecretPattern(
+        name="Masked Password Input",
+        category="PASSWORD",
+        regex=r"([•●*]{4,})"
     ),
 
     # --------------------------------------------------------------------------
-    # Personal & Financial PII (With Turkish Identity Support)
+    # Personal & Financial PII (Ultra-Tolerant Turkish & Global Identity Support)
     # --------------------------------------------------------------------------
-    # 1. Contextual Turkish Identity: When "tc", "kimlik", "tckn" etc. appear nearby,
-    # match ANY 11-digit number regardless of checksum!
+    # 1. Contextual & Prefixed Turkish ID:
+    # Tolerant to OCR confusions ('tc', 'te', 'tr', 't', 'tckn', 'tcno', 'kimlik', 'id', 'no')
+    # and handles internal spaces/dashes (e.g. '490 12345678', 'te49012345678', 'tc: 490 123 45 67')
     SecretPattern(
         name="Contextual Turkish ID (TCKN)",
         category="PII",
-        regex=r"(?i)(?:t\.?\s*c\.?\s*(?:kimlik)?(?:\s*no)?|tc\s*no|kimlik(?:\s*no)?|tckn|tcno|vatanda[sş]l[iı]k(?:\s*no)?)\s*[:=.\s-]*\s*([0-9](?:[\s.-]*[0-9]){10})\b"
+        regex=r"(?i)(?:t\.?\s*c\.?|tc|te|tr|tckn|tcno|kimlik|vatanda[sş]l[iı]k|id|no|t)?[:=.\s-]*((?<![0-9])[0-9](?:[\s.-]*[0-9]){9,10}(?![0-9]))"
     ),
-    # 2. Mathematical TCKN: Standalone 11-digit number starting with 1-9 without keywords
+    # 2. Standalone 10-11 Consecutive Digit Sequence:
+    # Any standalone 10 or 11 digits on screen (National ID, Phone, sensitive account number)
     SecretPattern(
-        name="Turkish Citizen ID (TCKN)",
+        name="Sensitive 10-11 Digit Number",
         category="PII",
-        regex=r"\b([1-9][0-9]{10})\b",
+        regex=r"(?<![0-9])([0-9](?:[\s.-]*[0-9]){9,10})(?![0-9])"
+    ),
+    # 3. Mathematical TCKN: Standalone 11-digit number strictly validated by official checksum algorithm
+    SecretPattern(
+        name="Turkish Citizen ID (TCKN - Checksum Validated)",
+        category="PII",
+        regex=r"(?<![0-9])([1-9][0-9]{10})(?![0-9])",
         validator=tckn_valid
     ),
-    # 3. Turkish Mobile Phone Number: 05XX XXX XX XX or +90 5XX...
+    # 4. Turkish Mobile Phone Number: 05XX XXX XX XX or +90 5XX...
     SecretPattern(
         name="Turkish Phone Number",
         category="PII",
