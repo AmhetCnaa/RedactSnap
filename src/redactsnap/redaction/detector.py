@@ -23,13 +23,15 @@ class RedactionTarget:
         category: str,
         matched_text: str,
         bbox: Tuple[int, int, int, int],
-        confidence: float
+        confidence: float,
+        matched_texts: Optional[List[str]] = None
     ):
         self.name = name
         self.category = category
         self.matched_text = matched_text
         self.bbox = bbox  # (x, y, w, h)
         self.confidence = confidence
+        self.matched_texts: List[str] = list(matched_texts) if matched_texts is not None else [matched_text]
 
     def __repr__(self):
         return f"<RedactionTarget [{self.category}] {self.name} text='{self.matched_text}' bbox={self.bbox}>"
@@ -137,34 +139,67 @@ class RedactionDetector:
         return merged_targets, ocr_boxes
 
     @staticmethod
-    def _merge_overlapping_targets(targets: List[RedactionTarget]) -> List[RedactionTarget]:
-        """Merges targets that overlap spatially within the image."""
+    def _boxes_overlap(b1: Tuple[int, int, int, int], b2: Tuple[int, int, int, int], tol_y: int = 2) -> bool:
+        x1, y1, w1, h1 = b1
+        x2, y2, w2, h2 = b2
+        x_overlap = not (x2 > x1 + w1 or x2 + w2 < x1)
+        y_overlap = not (y2 > y1 + h1 + tol_y or y2 + h2 < y1 - tol_y)
+        return x_overlap and y_overlap
+
+    @classmethod
+    def _merge_two_targets(cls, t1: RedactionTarget, t2: RedactionTarget) -> RedactionTarget:
+        x1, y1, w1, h1 = t1.bbox
+        x2, y2, w2, h2 = t2.bbox
+        new_x = min(x1, x2)
+        new_y = min(y1, y2)
+        new_w = max(x1 + w1, x2 + w2) - new_x
+        new_h = max(y1 + h1, y2 + h2) - new_y
+
+        merged_texts = list(t1.matched_texts)
+        for txt in t2.matched_texts:
+            if txt not in merged_texts:
+                merged_texts.append(txt)
+
+        combo_text = t1.matched_text
+        if t2.matched_text not in t1.matched_text:
+            combo_text = f"{t1.matched_text} + {t2.matched_text}"
+
+        return RedactionTarget(
+            name=t1.name,
+            category=t1.category,
+            matched_text=combo_text,
+            bbox=(new_x, new_y, new_w, new_h),
+            confidence=max(t1.confidence, t2.confidence),
+            matched_texts=merged_texts
+        )
+
+    @classmethod
+    def _merge_overlapping_targets(cls, targets: List[RedactionTarget]) -> List[RedactionTarget]:
+        """Iteratively merges targets that overlap spatially within the image across all candidates."""
         if not targets:
             return []
 
-        sorted_targets = sorted(targets, key=lambda t: (t.bbox[1], t.bbox[0]))
-        merged = []
+        current = list(targets)
+        changed = True
+        while changed:
+            changed = False
+            merged: List[RedactionTarget] = []
+            used = [False] * len(current)
 
-        for target in sorted_targets:
-            if not merged:
-                merged.append(target)
-                continue
+            for i in range(len(current)):
+                if used[i]:
+                    continue
+                ti = current[i]
+                for j in range(i + 1, len(current)):
+                    if used[j]:
+                        continue
+                    tj = current[j]
+                    if cls._boxes_overlap(ti.bbox, tj.bbox):
+                        ti = cls._merge_two_targets(ti, tj)
+                        used[j] = True
+                        changed = True
+                merged.append(ti)
+                used[i] = True
+            current = merged
 
-            last = merged[-1]
-            lx, ly, lw, lh = last.bbox
-            tx, ty, tw, th = target.bbox
-
-            x_overlap = not (tx > lx + lw or tx + tw < lx)
-            y_overlap = not (ty > ly + lh or ty + th < ly)
-
-            if x_overlap and y_overlap:
-                new_x = min(lx, tx)
-                new_y = min(ly, ty)
-                new_w = max(lx + lw, tx + tw) - new_x
-                new_h = max(ly + lh, ty + th) - new_y
-                last.bbox = (new_x, new_y, new_w, new_h)
-                last.matched_text = f"{last.matched_text} + {target.matched_text}"
-            else:
-                merged.append(target)
-
-        return merged
+        return current

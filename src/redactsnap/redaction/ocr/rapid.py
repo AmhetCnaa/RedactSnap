@@ -3,6 +3,7 @@ RapidOCR wrapper for local, offline ONNX-powered optical character recognition.
 Extracts line/word bounding boxes and text without any external binary dependencies.
 """
 
+import threading
 from typing import List, Tuple, Optional
 import cv2
 import numpy as np
@@ -56,18 +57,17 @@ class RapidOCREngine:
 
     _instance: Optional["RapidOCREngine"] = None
     _engine: Optional[RapidOCR] = None
+    _lock: threading.Lock = threading.Lock()
 
     def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            if RapidOCR is not None:
-                cls._engine = RapidOCR()
-                # Warm up ONNX session once so subsequent inferences are instantaneous
-                try:
-                    dummy = np.zeros((32, 32, 3), dtype=np.uint8)
-                    cls._engine(dummy)
-                except Exception:
-                    pass
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                if RapidOCR is not None:
+                    try:
+                        cls._engine = RapidOCR()
+                    except Exception:
+                        cls._engine = None
         return cls._instance
 
     @property
@@ -77,11 +77,12 @@ class RapidOCREngine:
     def warmup(self):
         """Pre-warms the ONNX runtime session to avoid cold-start lag."""
         if self.is_available:
-            try:
-                dummy = np.zeros((32, 32, 3), dtype=np.uint8)
-                self._engine(dummy)
-            except Exception:
-                pass
+            with self._lock:
+                try:
+                    dummy = np.zeros((32, 32, 3), dtype=np.uint8)
+                    self._engine(dummy)
+                except Exception:
+                    pass
 
     def recognize(self, image: Image.Image | np.ndarray) -> List[OCRTextBox]:
         """
@@ -120,7 +121,8 @@ class RapidOCREngine:
         # Keeps character edges crisp for low-contrast grey text in browser URL bars
         processed_arr = cv2.convertScaleAbs(processed_arr, alpha=1.2, beta=-5)
 
-        raw_results, _ = self._engine(processed_arr)
+        with self._lock:
+            raw_results, _ = self._engine(processed_arr)
         if not raw_results:
             return []
 

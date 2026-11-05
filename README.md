@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/AmhetCnaa/RedactSnap?style=for-the-badge&color=3B82F6&logo=github)](https://github.com/AmhetCnaa/RedactSnap/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/AmhetCnaa/RedactSnap)
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-42%2F42%20Passing-10B981?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-44%2F44%20Passing-10B981?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![License](https://img.shields.io/badge/License-MIT-F59E0B?style=for-the-badge)](LICENSE)
 
 <br/>
@@ -194,7 +194,7 @@ python -m redactsnap capture
 
 ## 🧪 Automated Testing
 
-RedactSnap is verified by **42 comprehensive unit tests** covering capture logic, redaction patterns, asynchronous background workers, and UI responsiveness:
+RedactSnap is verified by **44 comprehensive unit tests** covering capture logic, redaction patterns, asynchronous background workers, and UI responsiveness:
 
 ```powershell
 pytest -v
@@ -204,13 +204,13 @@ pytest -v
 tests/test_annotations.py ... (3 passed)
 tests/test_capture.py     ...... (6 passed)
 tests/test_recorder.py    ... (3 passed)
-tests/test_redaction.py   .............. (14 passed)
+tests/test_redaction.py   ................ (16 passed)
 tests/test_scroller.py    .. (2 passed)
 tests/test_studio.py      ..... (5 passed)
 tests/test_ui.py          ..... (5 passed)
 tests/test_uploader.py    .... (4 passed)
 
-======================= 42 passed in 5.85s =======================
+======================= 44 passed in 5.89s =======================
 ```
 
 ---

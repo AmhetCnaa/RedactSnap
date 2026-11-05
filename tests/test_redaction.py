@@ -10,6 +10,7 @@ from redactsnap.redaction.patterns import PATTERNS, luhn_checksum_valid, tckn_va
 from redactsnap.redaction.entropy import EntropyAnalyzer
 from redactsnap.redaction.masker import RedactionMasker, RedactionStyle
 from redactsnap.redaction.engine import RedactionPipeline
+from redactsnap.redaction.detector import RedactionTarget, RedactionDetector
 from redactsnap.redaction.ocr.rapid import RapidOCREngine
 
 
@@ -133,15 +134,20 @@ def test_patterns_contextual_tckn():
         ("T.C. Kimlik No: 11111111111", "11111111111"),
         ("tckn: 12345678901", "12345678901"),
         ("kimlik no: 55544433322", "55544433322"),
-        ("te49012345678", "49012345678"),
-        ("t49012345678", "49012345678"),
+        ("te: 49012345678", "49012345678"),
+        ("t: 49012345678", "49012345678"),
         ("tc: 490 12345678", "490 12345678"),
-        ("49012345678", "49012345678"),
     ]
     for text, expected_id in test_cases:
         matches = p.find_matches(text)
         assert len(matches) >= 1, f"Failed to match: {text}"
         assert expected_id in matches[0][2]
+
+    # Standalone numbers are captured by Sensitive 10-11 Digit Number
+    p_num = next(p for p in PATTERNS if p.name == "Sensitive 10-11 Digit Number")
+    matches_num = p_num.find_matches("49012345678")
+    assert len(matches_num) >= 1
+    assert "49012345678" in matches_num[0][2]
 
 
 def test_patterns_passwords_multilingual_and_masked():
@@ -241,3 +247,30 @@ def test_redaction_worker_async(qapp):
     assert scan_id == 42
     assert isinstance(redacted_img, Image.Image)
     assert len(targets) >= 1
+
+
+def test_entropy_url_query_parameters():
+    url = "https://api.example.com?api_key=4f9A2bK91dZp83LmQx7v&format=json"
+    matches = EntropyAnalyzer.scan_text(url)
+    assert len(matches) >= 1
+    matched_tokens = [m[2] for m in matches]
+    assert "4f9A2bK91dZp83LmQx7v" in matched_tokens
+
+
+def test_redaction_target_matched_texts_and_copy_as_text():
+    t1 = RedactionTarget("API Key", "API_KEY", "secret_one", (10, 10, 50, 20), 0.9)
+    t2 = RedactionTarget("Token", "TOKEN", "secret_two", (15, 11, 60, 20), 0.95)
+    merged = RedactionDetector._merge_overlapping_targets([t1, t2])
+    assert len(merged) == 1
+    assert "secret_one" in merged[0].matched_texts
+    assert "secret_two" in merged[0].matched_texts
+
+    from redactsnap.redaction.ocr.rapid import OCRTextBox
+    pipeline = RedactionPipeline()
+    # Mock box with merged content
+    box = OCRTextBox(text="My auth is secret_one and secret_two here", confidence=0.99, polygon=[[0, 0], [100, 0], [100, 20], [0, 20]])
+    pipeline.detector.scan = lambda img: (merged, [box])
+    sanitized = pipeline.copy_as_text(Image.new("RGB", (100, 20)), redact_secrets=True)
+    assert "secret_one" not in sanitized
+    assert "secret_two" not in sanitized
+    assert "[REDACTED]" in sanitized

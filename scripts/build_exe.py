@@ -28,37 +28,46 @@ def build():
     print(f"=== Building {EXE_NAME} Standalone Binary ===")
 
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    entrypoint = os.path.join(project_root, "src", "redactsnap", "__main__.py")
+    spec_path = os.path.join(project_root, "redactsnap.spec")
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onefile",
-        "--windowed",
-        f"--name={EXE_NAME}",
-        f"--paths={os.path.join(project_root, 'src')}",
-        "--hidden-import=PyQt6",
-        "--hidden-import=PyQt6.QtCore",
-        "--hidden-import=PyQt6.QtGui",
-        "--hidden-import=PyQt6.QtWidgets",
-        "--hidden-import=pynput",
-        "--hidden-import=pynput.keyboard",
-        "--hidden-import=pynput.mouse",
-        "--hidden-import=rapidocr_onnxruntime",
-        "--hidden-import=onnxruntime",
-        "--hidden-import=imageio",
-        "--hidden-import=cv2",
-        "--hidden-import=requests",
-    ]
-
-    ocr_data = locate_rapidocr_data()
-    if ocr_data:
-        cmd.append(f"--add-data={ocr_data}")
-
-    cmd.append(entrypoint)
+    if os.path.exists(spec_path):
+        cmd = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            spec_path,
+        ]
+    else:
+        entrypoint = os.path.join(project_root, "src", "redactsnap", "__main__.py")
+        cmd = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            "--onefile",
+            "--windowed",
+            f"--name={EXE_NAME}",
+            f"--paths={os.path.join(project_root, 'src')}",
+            "--hidden-import=PyQt6",
+            "--hidden-import=PyQt6.QtCore",
+            "--hidden-import=PyQt6.QtGui",
+            "--hidden-import=PyQt6.QtWidgets",
+            "--hidden-import=pynput",
+            "--hidden-import=pynput.keyboard",
+            "--hidden-import=pynput.mouse",
+            "--hidden-import=rapidocr_onnxruntime",
+            "--hidden-import=onnxruntime",
+            "--hidden-import=imageio",
+            "--hidden-import=cv2",
+            "--hidden-import=requests",
+        ]
+        ocr_data = locate_rapidocr_data()
+        if ocr_data:
+            cmd.append(f"--add-data={ocr_data}")
+        cmd.append(entrypoint)
 
     print("Executing PyInstaller command:")
     print(" ".join(cmd))

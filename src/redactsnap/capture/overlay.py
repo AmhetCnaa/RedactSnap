@@ -157,6 +157,21 @@ class SnippingOverlay(QWidget):
         self.toolbar.undo_annotation.connect(self._undo_last_annotation)
         self.toolbar.cancel_clicked.connect(self._cancel)
 
+    def apply_tray_settings(self, auto_redact: bool = False, preset_id: Optional[str] = None):
+        """Synchronizes default state from the persistent system tray settings."""
+        self._is_redacted = auto_redact
+        self.toolbar.set_redact_active(auto_redact)
+
+        if preset_id and preset_id != "off":
+            for idx, p in enumerate(PRESETS):
+                if p.id == preset_id:
+                    self._current_preset_idx = idx
+                    self.toolbar.btn_beautify.setText(f"🎨 {p.name}")
+                    break
+        else:
+            self._current_preset_idx = -1
+            self.toolbar.btn_beautify.setText("🎨 Frame")
+
     # --------------------------------------------------------------------------
     # Mouse Events
     # --------------------------------------------------------------------------
@@ -351,16 +366,39 @@ class SnippingOverlay(QWidget):
 
         if self.state in (OverlayState.SELECTED, OverlayState.ANNOTATING):
             step = 10 if (modifiers & Qt.KeyboardModifier.ShiftModifier) else 1
+            dx, dy = 0, 0
             if key == Qt.Key.Key_Left:
-                self.selection_rect.translate(-step, 0)
+                dx = -step
             elif key == Qt.Key.Key_Right:
-                self.selection_rect.translate(step, 0)
+                dx = step
             elif key == Qt.Key.Key_Up:
-                self.selection_rect.translate(0, -step)
+                dy = -step
             elif key == Qt.Key.Key_Down:
-                self.selection_rect.translate(0, step)
-            self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
-            self.update()
+                dy = step
+
+            if dx != 0 or dy != 0:
+                moved_rect = self.selection_rect.translated(dx, dy)
+                # Clamp within virtual desktop bounds
+                screen_rect = self.rect()
+                if moved_rect.left() < screen_rect.left():
+                    moved_rect.moveLeft(screen_rect.left())
+                if moved_rect.right() > screen_rect.right():
+                    moved_rect.moveRight(screen_rect.right())
+                if moved_rect.top() < screen_rect.top():
+                    moved_rect.moveTop(screen_rect.top())
+                if moved_rect.bottom() > screen_rect.bottom():
+                    moved_rect.moveBottom(screen_rect.bottom())
+
+                self.selection_rect = moved_rect
+                self._base_cropped_pixmap = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
+                self._cached_redacted_pixmap = None
+                self._cached_composite_pixmap = None
+
+                if self._is_redacted:
+                    self._start_async_redaction()
+
+                self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
+                self.update()
 
     # --------------------------------------------------------------------------
     # Handlers & Actions
@@ -624,12 +662,19 @@ class SnippingOverlay(QWidget):
 
         # 3. Selection cutout and preview
         if has_selection:
-            if self._is_redacted or self._current_preset_idx >= 0:
-                # Live preview of redacted secrets and studio frame
-                processed = self._get_current_image()
-                painter.drawPixmap(self.selection_rect, processed)
+            if self._is_redacted and self._cached_redacted_pixmap is not None:
+                painter.drawPixmap(self.selection_rect, self._cached_redacted_pixmap)
             else:
                 painter.drawPixmap(self.selection_rect, self.virtual_pixmap, self.selection_rect)
+
+            # Draw subtle theme frame preview outside selection if studio preset active
+            if 0 <= self._current_preset_idx < len(PRESETS):
+                preset = PRESETS[self._current_preset_idx]
+                theme_color = QColor(preset.gradient_stops[0])
+                frame_pen = QPen(theme_color, 3)
+                painter.setPen(frame_pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(self.selection_rect.adjusted(-4, -4, 4, 4), 6, 6)
 
             # Draw live annotations
             if self.annotations:
@@ -640,11 +685,30 @@ class SnippingOverlay(QWidget):
                 )
 
             # Draw active in-progress annotation preview
-            if self.state == OverlayState.ANNOTATING and self._anno_start_pos is not None:
-                p1 = self._anno_start_pos
-                p2 = self.current_point
-                painter.setPen(QPen(QColor(255, 59, 48), 2, Qt.PenStyle.DashLine))
-                painter.drawLine(p1, p2)
+            if (
+                self.state == OverlayState.ANNOTATING
+                and self._anno_start_pos is not None
+                and self.active_anno_tool is not None
+            ):
+                rel_start = (
+                    self._anno_start_pos.x() - self.selection_rect.x(),
+                    self._anno_start_pos.y() - self.selection_rect.y()
+                )
+                rel_curr = (
+                    self.current_point.x() - self.selection_rect.x(),
+                    self.current_point.y() - self.selection_rect.y()
+                )
+                temp_anno = Annotation(
+                    type=self.active_anno_tool,
+                    start_pos=rel_start,
+                    end_pos=rel_curr,
+                    text=str(self._step_counter) if self.active_anno_tool == AnnotationType.STEP_NUMBER else ""
+                )
+                AnnotationRenderer.render_with_qpainter(
+                    painter,
+                    [temp_anno],
+                    origin_offset=(self.selection_rect.x(), self.selection_rect.y())
+                )
 
             # Outer border
             pen_blue = QPen(QColor(10, 132, 255), 2)
@@ -859,10 +923,30 @@ class SnippingOverlay(QWidget):
         self._auto_save_and_confirm()
 
     def _cancel(self):
+        if hasattr(self, 'recorder') and self.recorder and self.recorder.is_recording:
+            try:
+                self.recorder.cancel()
+            except Exception:
+                pass
+        if hasattr(self, '_upload_worker') and self._upload_worker and self._upload_worker.isRunning():
+            try:
+                self._upload_worker.wait(500)
+            except Exception:
+                pass
         self._abort_active_redaction_scan()
         self.cancelled.emit()
         self.close()
 
     def closeEvent(self, event):
+        if hasattr(self, 'recorder') and self.recorder and self.recorder.is_recording:
+            try:
+                self.recorder.cancel()
+            except Exception:
+                pass
+        if hasattr(self, '_upload_worker') and self._upload_worker and self._upload_worker.isRunning():
+            try:
+                self._upload_worker.wait(500)
+            except Exception:
+                pass
         self._abort_active_redaction_scan()
         super().closeEvent(event)

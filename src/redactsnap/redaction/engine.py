@@ -62,8 +62,9 @@ class RedactionPipeline:
         for box in ocr_boxes:
             line_str = box.text
             for target in targets:
-                if target.matched_text in line_str:
-                    line_str = line_str.replace(target.matched_text, f"[{target.name.upper()}_REDACTED]")
+                for sub_secret in target.matched_texts:
+                    if sub_secret and sub_secret in line_str:
+                        line_str = line_str.replace(sub_secret, "[REDACTED]")
             lines.append(line_str)
 
         return "\n".join(lines)

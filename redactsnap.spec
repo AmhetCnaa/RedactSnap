@@ -6,8 +6,17 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
-# Collect RapidOCR ONNX models and yaml configs
-datas = collect_data_files('rapidocr_onnxruntime')
+# Collect RapidOCR ONNX models and yaml configs safely
+datas = []
+try:
+    datas += collect_data_files('rapidocr_onnxruntime')
+except Exception as e:
+    print(f"Notice: collect_data_files for rapidocr_onnxruntime skipped: {e}")
+
+try:
+    datas += collect_data_files('imageio_ffmpeg')
+except Exception as e:
+    print(f"Notice: collect_data_files for imageio_ffmpeg skipped: {e}")
 
 hiddenimports = [
     'PyQt6',
@@ -24,8 +33,21 @@ hiddenimports = [
     'requests',
     'redactsnap',
 ]
-hiddenimports += collect_submodules('pynput')
-hiddenimports += collect_submodules('rapidocr_onnxruntime')
+
+try:
+    hiddenimports += collect_submodules('pynput')
+except Exception:
+    pass
+
+try:
+    hiddenimports += collect_submodules('rapidocr_onnxruntime')
+except Exception:
+    pass
+
+try:
+    hiddenimports += collect_submodules('imageio_ffmpeg')
+except Exception:
+    pass
 
 a = Analysis(
     ['src/redactsnap/__main__.py'],
@@ -55,7 +77,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

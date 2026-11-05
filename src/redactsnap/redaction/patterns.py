@@ -157,7 +157,7 @@ PATTERNS: List[SecretPattern] = [
     SecretPattern(
         name="Contextual Turkish ID (TCKN)",
         category="PII",
-        regex=r"(?i)(?:t\.?\s*c\.?|tc|te|tr|tckn|tcno|kimlik|vatanda[sş]l[iı]k|id|no|t)?[:;=.\s-]*([0-9]{10,11}|[0-9]{3,4}\s[0-9]{7,8})"
+        regex=r"(?i)(?:t\.?\s*c\.?|tc|te|tr|tckn|tcno|kimlik|vatanda[sş]l[iı]k|id|no|t)[:;=.\s-]+([0-9]{10,11}|[0-9]{3,4}\s[0-9]{7,8})"
     ),
     # 2. Standalone 10-11 Consecutive Digit Sequence:
     # Any standalone 10 or 11 digits on screen (National ID, Phone, sensitive account number)

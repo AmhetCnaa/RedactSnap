@@ -87,7 +87,11 @@ class AnnotationRenderer:
                 cls._draw_pil_arrow(draw, a)
 
             elif a.type == AnnotationType.STEP_NUMBER:
-                cls._draw_pil_step_number(draw, a, font)
+                try:
+                    scaled_font = ImageFont.load_default(size=int(a.radius * 1.15))
+                except TypeError:
+                    scaled_font = font
+                cls._draw_pil_step_number(draw, a, scaled_font)
 
         return canvas
 
@@ -146,14 +150,20 @@ class AnnotationRenderer:
         draw.polygon([(x2, y2), (p1_x, p1_y), (p2_x, p2_y)], fill=a.color)
 
     @classmethod
-    def _draw_pil_step_number(cls, draw: ImageDraw.ImageDraw, a: Annotation, font: ImageFont.ImageFont):
+    def _draw_pil_step_number(cls, draw: ImageDraw.ImageDraw, a: Annotation, font: Optional[ImageFont.ImageFont] = None):
         cx, cy = a.start_pos
         r = a.radius
 
         # Circle badge
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=a.color, outline=(255, 255, 255, 220), width=1)
 
-        # Centered step number text
+        # Centered step number text with scaled font fallback
+        if font is None:
+            try:
+                font = ImageFont.load_default(size=int(r * 1.15))
+            except TypeError:
+                font = ImageFont.load_default()
+
         draw.text((cx, cy), a.text, fill=(255, 255, 255, 255), anchor="mm", font=font)
 
     # --------------------------------------------------------------------------
@@ -192,6 +202,15 @@ class AnnotationRenderer:
                 x2, y2 = a.end_pos[0] + ox, a.end_pos[1] + oy
                 rect = QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
                 painter.drawRect(rect)
+
+            elif a.type == AnnotationType.SPOTLIGHT:
+                x1, y1 = a.start_pos[0] + ox, a.start_pos[1] + oy
+                x2, y2 = a.end_pos[0] + ox, a.end_pos[1] + oy
+                rect = QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+                spot_pen = QPen(QColor(255, 255, 255, 220), 1.5, Qt.PenStyle.DashLine)
+                painter.setPen(spot_pen)
+                painter.setBrush(QBrush(QColor(255, 255, 255, 30)))
+                painter.drawRoundedRect(rect, 4.0, 4.0)
 
             elif a.type == AnnotationType.ARROW:
                 cls._draw_qt_arrow(painter, a, ox, oy)

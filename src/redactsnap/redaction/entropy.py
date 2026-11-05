@@ -115,8 +115,8 @@ class EntropyAnalyzer:
         Returns: [(start_idx, end_idx, token, entropy, reason), ...]
         """
         results = []
-        # Split on whitespace and punctuation boundaries
-        for match in re.finditer(r"[^\s:=,;\"'<>(){}\[\]]+", text):
+        # Split on whitespace and punctuation boundaries (including URL query delimiters ? and &)
+        for match in re.finditer(r"[^\s:=,;\"'<>(){}\[\]?&]+", text):
             token = match.group()
             is_secret, entropy, reason = cls.is_secret_candidate(token)
             if is_secret:

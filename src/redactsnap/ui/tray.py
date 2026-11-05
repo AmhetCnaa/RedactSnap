@@ -5,9 +5,10 @@ Provides a persistent background daemon, tray icon, context menu, and preference
 
 from typing import Optional, Callable
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QMessageBox, QApplication
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QAction
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QAction, QActionGroup
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 
+from .. import __version__
 from ..studio.presets import PRESETS, get_preset_by_id
 
 
@@ -102,11 +103,24 @@ class SystemTrayManager(QObject):
 
         # Submenu: Presets
         presets_menu = self.menu.addMenu("🎨 Frame Preset")
+        self.preset_group = QActionGroup(presets_menu)
+        self.preset_group.setExclusive(True)
+
+        # "Frame: Off" Option
+        act_off = QAction("Frame: Off", presets_menu)
+        act_off.setCheckable(True)
+        act_off.setChecked(self.selected_preset_id in ("off", "", None))
+        act_off.triggered.connect(lambda: self._set_preset("off"))
+        self.preset_group.addAction(act_off)
+        presets_menu.addAction(act_off)
+        presets_menu.addSeparator()
+
         for preset in PRESETS:
             act = QAction(preset.name, presets_menu)
             act.setCheckable(True)
             act.setChecked(preset.id == self.selected_preset_id)
             act.triggered.connect(lambda checked, pid=preset.id: self._set_preset(pid))
+            self.preset_group.addAction(act)
             presets_menu.addAction(act)
 
         self.menu.addSeparator()
@@ -142,7 +156,7 @@ class SystemTrayManager(QObject):
         QMessageBox.about(
             None,
             "About RedactSnap",
-            "<h3>RedactSnap v0.1.0</h3>"
+            f"<h3>RedactSnap v{__version__}</h3>"
             "<p>Open-source, privacy-first desktop screenshot autopilot with automatic secret redaction, "
             "100% offline OCR, and social canvas beautification.</p>"
             "<p>CleanShot X alternative for Windows and Linux.</p>"

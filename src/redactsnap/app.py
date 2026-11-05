@@ -59,6 +59,10 @@ class RedactSnapApp(QObject):
         virtual_pixmap, virtual_rect = ScreenGrabber.capture_virtual_desktop()
 
         self.active_overlay = SnippingOverlay(virtual_pixmap, virtual_rect)
+        self.active_overlay.apply_tray_settings(
+            auto_redact=self.tray.auto_redact_enabled,
+            preset_id=self.tray.selected_preset_id
+        )
 
         def on_confirmed(pixmap, rect):
             print(f"[RedactSnap] Capture completed: {rect.width()}x{rect.height()}")

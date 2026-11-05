@@ -69,6 +69,7 @@ def test_render_with_qpainter(qapp):
         Annotation(type=AnnotationType.ARROW, start_pos=(40, 50), end_pos=(120, 120)),
         Annotation(type=AnnotationType.RECTANGLE, start_pos=(120, 120), end_pos=(200, 200)),
         Annotation(type=AnnotationType.HIGHLIGHTER, start_pos=(10, 10), end_pos=(80, 30)),
+        Annotation(type=AnnotationType.SPOTLIGHT, start_pos=(5, 5), end_pos=(50, 50)),
     ]
 
     AnnotationRenderer.render_with_qpainter(painter, annotations)

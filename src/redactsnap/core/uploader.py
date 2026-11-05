@@ -10,7 +10,10 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Dict
 from PIL import Image
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -35,6 +38,9 @@ class ImgurUploader:
 
     @classmethod
     def upload(cls, image: Image.Image, client_id: Optional[str] = None) -> UploadResult:
+        if requests is None:
+            return UploadResult(success=False, error_message="The 'requests' package is not installed.")
+
         cid = client_id or cls.DEFAULT_CLIENT_ID
 
         buffer = io.BytesIO()
@@ -74,6 +80,9 @@ class S3Uploader:
         public_base_url: str,
         auth_token: Optional[str] = None
     ) -> UploadResult:
+        if requests is None:
+            return UploadResult(success=False, error_message="The 'requests' package is not installed.")
+
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_bytes = buffer.getvalue()
