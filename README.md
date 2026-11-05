@@ -11,24 +11,25 @@
                                                    |_|    
 ```
 
-### *The Privacy-First Desktop Screenshot Autopilot*
-**Automatic secret redaction • 100% offline local OCR • Apple/Raycast social canvas • Zero cloud**
+### *The Open-Source, Privacy-First Desktop Screenshot Autopilot*
+**Auto-redaction of secrets • Offline OCR • Vector annotations • Screen recording (GIF/MP4) • Scrolling stitching • Social canvas**
 
+[![Version](https://img.shields.io/badge/Version-0.5.0-blue.svg)](https://github.com/AmhetCnaa/RedactSnap/releases)
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-41CD52?logo=qt&logoColor=white)](https://riverbankcomputing.com/software/pyqt/)
 [![RapidOCR](https://img.shields.io/badge/OCR-RapidOCR%20(ONNX)-blue)](https://github.com/RapidAI/RapidOCR)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?logo=windows&logoColor=white)](https://github.com/AmhetCnaa/RedactSnap)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-24%2F24%20Passed-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-36%2F36%20Passed-brightgreen)](tests/)
 
 ---
 
 [Key Features](#-key-features) •
 [Why RedactSnap?](#-why-redactsnap) •
 [Quickstart](#-quickstart) •
-[Shortcuts](#-shortcuts) •
-[Architecture](#-architecture) •
-[Presets](#-studio-canvas-presets)
+[Standalone Executable](#-portable-executable) •
+[Interactive Controls](#-shortcuts--controls) •
+[Architecture](#-architecture)
 
 </div>
 
@@ -36,33 +37,45 @@
 
 ## ⚡ Key Features
 
-- **🛡️ Intelligent Auto-Redaction:** In-flight scanning for API keys (OpenAI, AWS, GitHub, Stripe, Anthropic), JWTs, emails, credit cards (Luhn validated), IP addresses, and high-entropy secrets via Shannon Entropy $H(X)$. Smooth feathered Gaussian blur or modern dark pills.
+- **🛡️ In-Flight Auto-Redaction:** Detects API keys (OpenAI, AWS, GitHub, Stripe, Anthropic), JWT tokens, passwords, emails, credit cards (Luhn checksum), Turkish ID (TCKN), IPv4, and high-entropy secrets using Shannon Entropy $H(X)$. Smooth feathered Gaussian blur or modern dark pills.
+- **✏️ Smart Vector Annotations:**
+  - **Auto-Incrementing Step Numbers:** Click to drop `①`, `②`, `③` numbered circular badges for bug reports and walkthroughs.
+  - **Vector Arrows & Boxes:** Pixel-sharp arrows and clean outlined boxes.
+  - **Translucent Highlighter:** Fluorescent neon yellow highlighter that blends over text without obscuring readability.
+  - **Spotlight Focus:** Darkens the surrounding area to draw instant visual focus to a specific element.
+- **🎥 Live Screen Recording (GIF / MP4):** One-click recording of your selection at 30/60 FPS with real-time timer HUD. Exports ultra-lightweight animated `.gif` or `.mp4` with pre-redaction masking!
+- **📜 Vertical Scrolling Screenshot & Stitching:** Automatically captures long web pages, terminal logs, or code documents using OpenCV template matching to create one tall continuous image.
 - **📝 1-Click Offline OCR ("Copy as Text"):** Extract all text from your selection straight into your clipboard using local ONNX inference models. Zero external software setup, zero cloud calls.
 - **🎨 Social Studio Canvas:** Transform raw screenshots into social-media-ready graphics with Apple & Linear-grade multi-stop gradients, 3-tier diffuse soft drop shadows, rounded corners, and macOS traffic-light window frames.
+- **🔗 Zero-Server Instant Link Sharing:** 1-click anonymous upload to Imgur or personal Cloudflare R2 / AWS S3 / MinIO buckets with auto-copy link to clipboard.
 - **🔍 8x Pixel Loupe:** CleanShot-grade pixel magnifier showing real-time RGB hex color codes, coordinates, and pixel grids during selection.
-- **⚡ Blazing Fast (<15ms):** Instant multi-monitor virtual desktop capture with no screen lag.
-- **🔒 100% Zero-Cloud:** Never sends a single byte to an external server. Completely offline, secure, and private.
+- **🔒 100% Zero-Cloud:** Never sends your images or credentials anywhere unless you explicitly choose to upload.
 
 ---
 
 ## 🥊 Why RedactSnap?
 
-| Feature | **RedactSnap** | **CleanShot X** | **Flameshot** | **Windows Snip** | **ShareX** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Open Source & Free** | ✅ **Yes (MIT)** | ❌ Paid ($29+) | ✅ Yes | ❌ Proprietary | ✅ Yes |
-| **Cross-Platform (Win/Linux)**| ✅ **Yes** | ❌ macOS Only | ✅ Yes | ❌ Win Only | ❌ Win Only |
-| **Auto-Redact API Keys / PII** | ✅ **Automatic** | ❌ Manual | ❌ Manual | ❌ Manual | ❌ Manual |
-| **Shannon Entropy Secret Detection** | ✅ **Yes** | ❌ No | ❌ No | ❌ No | ❌ No |
-| **100% Offline Local OCR** | ✅ **RapidOCR (ONNX)** | ⚠️ Cloud/Native | ❌ Plugin | ⚠️ Basic | ⚠️ Tesseract |
-| **Social Studio Canvas (Gradients/Shadows)**| ✅ **Built-in** | ⚠️ Basic | ❌ No | ❌ No | ⚠️ Complex |
-| **Frameless Glassmorphism Toolbar** | ✅ **Yes** | ✅ Yes | ⚠️ Legacy UI | ❌ Minimal | ⚠️ Dense UI |
+| Feature | **RedactSnap v0.5.0** | **CleanShot X** | **Flameshot** | **ShareX** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Open Source & Free** | ✅ **Yes (MIT)** | ❌ Paid ($29+) | ✅ Yes | ✅ Yes |
+| **Cross-Platform (Win/Linux)**| ✅ **Yes** | ❌ macOS Only | ✅ Yes | ❌ Win Only |
+| **Auto-Redact Secrets / PII** | ✅ **Automatic (ONNX + Entropy)** | ❌ Manual | ❌ Manual | ❌ Manual |
+| **100% Offline Local OCR** | ✅ **RapidOCR (ONNX)** | ⚠️ Native macOS | ❌ Plugin | ⚠️ Tesseract.exe |
+| **Numbered Step Badges (① ② ③)**| ✅ **Built-in** | ✅ Yes | ❌ No | ⚠️ Complex |
+| **Vector Arrows & Highlighter** | ✅ **Built-in** | ✅ Yes | ⚠️ Basic | ⚠️ Complex |
+| **GIF / MP4 Recording** | ✅ **Built-in (with Auto-Masking)** | ✅ Yes | ❌ No | ✅ Yes |
+| **Vertical Scrolling Stitching** | ✅ **OpenCV Cross-Correlation** | ✅ Yes | ❌ No | ⚠️ Manual |
+| **Social Studio Canvas (Gradients)**| ✅ **7 Designer Themes** | ⚠️ Basic | ❌ No | ⚠️ Complex |
+| **Standalone Portable .exe** | ✅ **Single-file (Zero Python needed)** | ❌ N/A | ⚠️ Installer | ⚠️ Installer |
 
 ---
 
 ## 🚀 Quickstart
 
-### 1. Requirements & Setup
-Requires Python 3.10+ (Python 3.12 recommended with [uv](https://github.com/astral-sh/uv)):
+### Option A: Portable Standalone `.exe` (No Python Required)
+Download the latest `RedactSnap-v0.5.0-x64.exe` from the [Releases](https://github.com/AmhetCnaa/RedactSnap/releases) page and run it directly!
+
+### Option B: From Source (Python 3.10+)
 
 ```powershell
 # Clone the repository
@@ -73,11 +86,9 @@ cd RedactSnap
 uv venv --python 3.12
 .venv\Scripts\activate
 
-# Install package in editable mode with development & OCR dependencies
-uv pip install -e ".[ocr-rapid,dev]"
+# Install package in editable mode
+uv pip install -e ".[ocr-rapid,uploader,dev]"
 ```
-
-### 2. Launching RedactSnap
 
 #### 🔔 Background Daemon Mode (Recommended Daily Use)
 Runs silently in your Windows System Tray and registers global hotkeys (`PrintScreen` or `Ctrl+Shift+S`):
@@ -98,28 +109,30 @@ python -m redactsnap capture
 ## 🎮 Shortcuts & Controls
 
 ```text
- ┌────────────────────────────────────────────────────────┐
- │  [📋 Copy]  [🛡️ Redact]  [🎨 Frame]  [📝 OCR]  [💾 Save] │
- └────────────────────────────────────────────────────────┘
+ ┌────────────────────────────────────────────────────────────────────────────────┐
+ │  [📋 Copy] [🛡️ Redact] [🎨 Frame] [✏️ Draw] [📝 OCR] [⏺ Record] [🔗 Share] [💾 Save] │
+ └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Action | Shortcut / Trigger | Description |
 | :--- | :--- | :--- |
-| **Trigger Snip** | `PrintScreen` or `Ctrl+Shift+S` | Opens full-screen virtual desktop overlay |
+| **Trigger Snip** | `PrintScreen` or `Ctrl+Shift+S` | Opens full-screen virtual desktop overlay in <15ms |
 | **Select Region** | `Left Click + Drag` | Defines selection rectangle with 8x magnifier loupe |
 | **Copy Image** | `Enter` or `Ctrl+C` | Copies capture to clipboard and closes |
 | **Save Image** | `Ctrl+S` or `[💾 Save]` | Opens file dialog (PNG / JPEG / WebP) |
 | **Cancel** | `Escape` or `Right Click` | Dismisses overlay without copying |
+| **Undo Draw** | `Ctrl+Z` or `[↩️ Undo]` | Removes last annotation |
 | **1px Nudge** | `Arrow Keys` | Moves active selection by 1 pixel (Shift for 10px) |
-| **Live Redact** | `[🛡️ Redact]` | Toggles auto-redaction on the active selection |
-| **Cycle Themes** | `[🎨 Frame]` | Cycles through gradient canvas presets in real-time |
-| **Copy Text** | `[📝 OCR Text]` | Extracts text to clipboard with floating toast notification |
+| **Live Redact** | `[🛡️ Redact]` | Toggles auto-redaction on active selection |
+| **Cycle Frames** | `[🎨 Frame]` | Cycles gradient themes: Obsidian → Sunset → Cyber Purple → Emerald... |
+| **Annotate** | `[✏️ Draw]` | Toggles Step Numbers, Arrows, Rectangles, Highlighters, Spotlights |
+| **Record GIF/MP4**| `[⏺ Record]` | Starts screen recording of selected box with timer HUD |
+| **Upload Link** | `[🔗 Share]` | Uploads to Imgur / S3 and copies public URL to clipboard |
+| **Copy Text** | `[📝 OCR]` | Extracts text to clipboard with floating toast notification |
 
 ---
 
 ## 🎨 Studio Canvas Presets
-
-RedactSnap includes curated visual presets inspired by modern design leaders:
 
 - 🌌 **Obsidian Dark:** Linear-style deep stealth dark space (`#090D16` → `#18202F` → `#0F172A`).
 - 🌅 **Sunset Warmth:** macOS Monterey dusk with royal purple, electric magenta, and warm coral.
@@ -131,56 +144,38 @@ RedactSnap includes curated visual presets inspired by modern design leaders:
 
 ---
 
-## 🏛️ Architecture & Data Flow
+## 📦 Building the Standalone Executable
 
-```mermaid
-flowchart TD
-    HK["Global Hotkeys<br/>(PrintScreen / Ctrl+Shift+S)"] --> SC["Multi-Monitor Capture<br/>(mss / Qt Native Stitcher)"]
-    SC --> OV["Snipping Overlay (PyQt6)<br/>Loupe + Dim Shroud + HUD"]
-    OV --> TB["Floating Glassmorphism Toolbar"]
-    
-    TB -->|Copy Image| CB["System Clipboard"]
-    TB -->|Save| DISK["Disk Export (PNG/JPG/WebP)"]
-    TB -->|Auto Redact| OCR["RapidOCR ONNX Engine"]
-    TB -->|Beautify| ST["Social Studio Canvas Engine"]
-    TB -->|OCR Text| TXT["Extract Text -> Clipboard"]
-    
-    OCR --> DET["Secret Detection Pipeline<br/>(Regex Bank + Shannon Entropy)"]
-    DET --> MASK["Aesthetic Masker<br/>(Feathered Gaussian Blur / Dark Pills)"]
-    MASK --> OV
-    ST --> OV
+To compile RedactSnap into a single, zero-dependency `RedactSnap-v0.5.0-x64.exe`:
+
+```powershell
+python scripts/build_exe.py
 ```
+
+The resulting binary will be placed inside `dist/`.
 
 ---
 
 ## 🧪 Automated Testing
 
-RedactSnap is rigorously tested with **24 unit tests** covering multi-monitor coordinate math, OpenCV masking, OCR pipeline, Shannon Entropy filters, and UI toolbar actions:
+RedactSnap is verified with **36 comprehensive unit tests**:
 
 ```powershell
 pytest -v
 ```
 
 ```text
-tests/test_capture.py    ...... (6 passed)
-tests/test_redaction.py  ........ (8 passed)
-tests/test_studio.py     ..... (5 passed)
-tests/test_ui.py         ..... (5 passed)
+tests/test_annotations.py ... (3 passed)
+tests/test_capture.py     ...... (6 passed)
+tests/test_recorder.py    ... (3 passed)
+tests/test_redaction.py   ........ (8 passed)
+tests/test_scroller.py    .. (2 passed)
+tests/test_studio.py      ..... (5 passed)
+tests/test_ui.py          ..... (5 passed)
+tests/test_uploader.py    .... (4 passed)
 
-====================== 24 passed in 3.15s ======================
+====================== 36 passed in 6.24s ======================
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'feat: add some amazing feature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 

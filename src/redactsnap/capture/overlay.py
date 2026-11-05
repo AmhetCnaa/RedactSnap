@@ -1,12 +1,13 @@
 """
-Interactive Snipping Overlay for RedactSnap.
-Provides a multi-monitor, high-DPI aware, semi-transparent overlay with:
-- Drag-to-select rectangle with handles
-- Real-time dimension HUD badge
-- CleanShot X-style pixel magnifier loupe with hex color inspection
-- Floating glassmorphism action toolbar with live redaction & beautification
-- 1-Click offline OCR copy with toast notifications
-- Fine-grained keyboard controls (Escape to cancel, Enter / Ctrl+C to confirm, Arrows to nudge)
+Interactive Snipping Overlay for RedactSnap v0.5.0.
+Combines:
+- Frameless multi-monitor virtual desktop capture
+- Real-time 8x pixel magnifier loupe
+- Glassmorphism action toolbar
+- Smart vector annotations (Step numbers, arrows, boxes, highlighters, spotlights)
+- Screen recording with timer HUD
+- Instant zero-server link sharing (Imgur / S3)
+- Live redaction & studio beautifier
 """
 
 from enum import Enum, auto
@@ -28,20 +29,25 @@ from PyQt6.QtGui import (
 )
 
 from .grabber import ScreenGrabber
+from .recorder import ScreenRecorder
 from ..ui.toolbar import FloatingToolbar
 from ..ui.hud import ToastHUD
-from ..redaction.engine import RedactionPipeline
-from ..redaction.masker import RedactionStyle
+from ..studio.annotations import Annotation, AnnotationType, AnnotationRenderer
 from ..studio.beautifier import StudioBeautifier, StudioConfig
 from ..studio.presets import PRESETS, get_preset_by_id
+from ..redaction.engine import RedactionPipeline
+from ..redaction.masker import RedactionStyle
+from ..core.uploader import UploadWorker, UploadProvider, UploadResult
+from ..core.config import ConfigManager
 
 
 class OverlayState(Enum):
-    READY = auto()      # Waiting for user to start dragging
-    DRAGGING = auto()   # User is actively dragging to define selection
-    SELECTED = auto()   # Selection is made, toolbar available
-    MOVING = auto()     # Moving the existing selection rectangle
-    RESIZING = auto()   # Resizing via one of the 8 border handles
+    READY = auto()
+    DRAGGING = auto()
+    SELECTED = auto()
+    ANNOTATING = auto()
+    MOVING = auto()
+    RESIZING = auto()
 
 
 class ResizeHandle(Enum):
@@ -82,20 +88,33 @@ class SnippingOverlay(QWidget):
         self.selection_rect = QRect()
         self.move_offset = QPoint()
 
-        # Cached full image for fast pixel inspection in loupe
+        # Cached image for loupe
         self._cached_qimage = self.virtual_pixmap.toImage()
 
         # Live transformation state
         self._is_redacted = False
-        self._current_preset_idx = -1  # -1 = Off, 0+ = preset in PRESETS
+        self._current_preset_idx = -1
         self._redaction_pipeline: Optional[RedactionPipeline] = None
         self._cached_processed_pixmap: Optional[QPixmap] = None
+
+        # Annotations state
+        self.annotations: List[Annotation] = []
+        self.active_anno_tool: Optional[AnnotationType] = None
+        self._anno_start_pos: Optional[QPoint] = None
+        self._step_counter = 1
+
+        # Recording state
+        self.recorder = ScreenRecorder(self)
+        self.recorder.tick.connect(self._on_recorder_tick)
+        self.recorder.finished.connect(self._on_recorder_finished)
+        self.recorder.failed.connect(self._on_recorder_failed)
+
+        self._upload_worker: Optional[UploadWorker] = None
 
         self._init_window()
         self._init_ui_components()
 
     def _init_window(self):
-        """Sets frameless, always-on-top, tool window properties covering all monitors."""
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -109,26 +128,28 @@ class SnippingOverlay(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor)
 
     def _init_ui_components(self):
-        """Initializes floating toolbar and toast HUD."""
         self.toolbar = FloatingToolbar(self)
         self.toast = ToastHUD(self)
 
-        # Connect toolbar signals
         self.toolbar.copy_clicked.connect(self._confirm_to_clipboard)
         self.toolbar.redact_toggled.connect(self._on_redact_toggled)
         self.toolbar.beautify_cycle.connect(self._on_beautify_cycle)
         self.toolbar.ocr_clicked.connect(self._on_ocr_clicked)
         self.toolbar.save_clicked.connect(self._on_save_clicked)
+        self.toolbar.upload_clicked.connect(self._on_upload_clicked)
+        self.toolbar.record_toggle.connect(self._on_record_toggled)
+        self.toolbar.annotation_selected.connect(self._on_annotation_tool_selected)
+        self.toolbar.undo_annotation.connect(self._undo_last_annotation)
         self.toolbar.cancel_clicked.connect(self._cancel)
 
     # --------------------------------------------------------------------------
-    # Mouse Event Handling
+    # Mouse Events
     # --------------------------------------------------------------------------
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             if event.button() == Qt.MouseButton.RightButton:
-                if self.state == OverlayState.SELECTED:
+                if self.state in (OverlayState.SELECTED, OverlayState.ANNOTATING):
                     self._reset_selection()
                 else:
                     self._cancel()
@@ -136,8 +157,28 @@ class SnippingOverlay(QWidget):
 
         pos = event.pos()
 
-        if self.state == OverlayState.SELECTED:
-            # Check if user clicked on a resize handle
+        # If annotation tool active and clicked inside selection
+        if self.active_anno_tool is not None and self.selection_rect.contains(pos):
+            self.state = OverlayState.ANNOTATING
+            rel_x = pos.x() - self.selection_rect.x()
+            rel_y = pos.y() - self.selection_rect.y()
+            self._anno_start_pos = pos
+
+            if self.active_anno_tool == AnnotationType.STEP_NUMBER:
+                # Instant drop of step number
+                anno = Annotation(
+                    type=AnnotationType.STEP_NUMBER,
+                    start_pos=(rel_x, rel_y),
+                    end_pos=(rel_x, rel_y),
+                    text=str(self._step_counter)
+                )
+                self.annotations.append(anno)
+                self._step_counter += 1
+                self.state = OverlayState.SELECTED
+                self.update()
+            return
+
+        if self.state in (OverlayState.SELECTED, OverlayState.ANNOTATING):
             handle = self._hit_test_handle(pos)
             if handle != ResizeHandle.NONE:
                 self.state = OverlayState.RESIZING
@@ -146,7 +187,6 @@ class SnippingOverlay(QWidget):
                 self.toolbar.hide()
                 return
 
-            # Check if user clicked inside selection to move it
             if self.selection_rect.contains(pos):
                 self.state = OverlayState.MOVING
                 self.move_offset = pos - self.selection_rect.topLeft()
@@ -154,11 +194,13 @@ class SnippingOverlay(QWidget):
                 self.toolbar.hide()
                 return
 
-        # Start a fresh selection
+        # Start fresh selection
         self.state = OverlayState.DRAGGING
         self.origin_point = pos
         self.current_point = pos
         self.selection_rect = QRect(pos, QSize(0, 0))
+        self.annotations.clear()
+        self._step_counter = 1
         self._cached_processed_pixmap = None
         self.toolbar.hide()
         self.setCursor(Qt.CursorShape.CrossCursor)
@@ -168,7 +210,10 @@ class SnippingOverlay(QWidget):
         pos = event.pos()
         self.current_point = pos
 
-        if self.state == OverlayState.DRAGGING:
+        if self.state == OverlayState.ANNOTATING:
+            self.update()
+
+        elif self.state == OverlayState.DRAGGING:
             self.selection_rect = QRect(self.origin_point, pos).normalized()
             self.update()
 
@@ -193,6 +238,8 @@ class SnippingOverlay(QWidget):
                 self.setCursor(Qt.CursorShape.SizeVerCursor)
             elif handle in (ResizeHandle.MID_LEFT, ResizeHandle.MID_RIGHT):
                 self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif self.active_anno_tool is not None:
+                self.setCursor(Qt.CursorShape.CrossCursor)
             elif self.selection_rect.contains(pos):
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
             else:
@@ -204,11 +251,30 @@ class SnippingOverlay(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.state == OverlayState.ANNOTATING and self._anno_start_pos is not None:
+                pos = event.pos()
+                sx = self._anno_start_pos.x() - self.selection_rect.x()
+                sy = self._anno_start_pos.y() - self.selection_rect.y()
+                ex = pos.x() - self.selection_rect.x()
+                ey = pos.y() - self.selection_rect.y()
+
+                if abs(ex - sx) > 3 or abs(ey - sy) > 3:
+                    anno = Annotation(
+                        type=self.active_anno_tool,
+                        start_pos=(sx, sy),
+                        end_pos=(ex, ey)
+                    )
+                    self.annotations.append(anno)
+
+                self._anno_start_pos = None
+                self.state = OverlayState.SELECTED
+                self.update()
+                return
+
             if self.state in (OverlayState.DRAGGING, OverlayState.MOVING, OverlayState.RESIZING):
                 if self.selection_rect.width() >= 12 and self.selection_rect.height() >= 12:
                     self.state = OverlayState.SELECTED
                     self.setCursor(Qt.CursorShape.ArrowCursor)
-                    # Anchor floating toolbar
                     self.toolbar.anchor_to_selection(self.selection_rect, self.rect())
                 else:
                     self._reset_selection()
@@ -220,7 +286,7 @@ class SnippingOverlay(QWidget):
                 self._confirm_to_clipboard()
 
     # --------------------------------------------------------------------------
-    # Keyboard Event Handling
+    # Keyboard Events
     # --------------------------------------------------------------------------
 
     def keyPressEvent(self, event):
@@ -241,12 +307,16 @@ class SnippingOverlay(QWidget):
                 self._confirm_to_clipboard()
             return
 
+        if key == Qt.Key.Key_Z and (modifiers & Qt.KeyboardModifier.ControlModifier):
+            self._undo_last_annotation()
+            return
+
         if key == Qt.Key.Key_S and (modifiers & Qt.KeyboardModifier.ControlModifier):
             if self.selection_rect.isValid() and not self.selection_rect.isEmpty():
                 self._on_save_clicked()
             return
 
-        if self.state == OverlayState.SELECTED:
+        if self.state in (OverlayState.SELECTED, OverlayState.ANNOTATING):
             step = 10 if (modifiers & Qt.KeyboardModifier.ShiftModifier) else 1
             if key == Qt.Key.Key_Left:
                 self.selection_rect.translate(-step, 0)
@@ -260,31 +330,31 @@ class SnippingOverlay(QWidget):
             self.update()
 
     # --------------------------------------------------------------------------
-    # Live Redaction & Beautification Handlers
+    # Handlers & Actions
     # --------------------------------------------------------------------------
 
     def _get_current_image(self) -> QPixmap:
-        """Returns the current selection pixmap, applying active live filters."""
-        if self._cached_processed_pixmap is not None:
-            return self._cached_processed_pixmap
-
+        """Composites cropped selection with redactions, annotations, and beautifier."""
         cropped = ScreenGrabber.crop_region(self.virtual_pixmap, self.selection_rect)
         pil_img = ScreenGrabber.pixmap_to_pil(cropped)
 
-        # 1. Redaction if active
+        # 1. Redaction
         if self._is_redacted:
             if self._redaction_pipeline is None:
                 self._redaction_pipeline = RedactionPipeline()
-            pil_img, targets = self._redaction_pipeline.process(pil_img, style=RedactionStyle.GAUSSIAN_BLUR)
+            pil_img, _ = self._redaction_pipeline.process(pil_img, style=RedactionStyle.GAUSSIAN_BLUR)
 
-        # 2. Beautification if active
+        # 2. Annotations
+        if self.annotations:
+            pil_img = AnnotationRenderer.render_on_image(pil_img, self.annotations)
+
+        # 3. Studio Beautification
         if self._current_preset_idx >= 0:
             preset = PRESETS[self._current_preset_idx]
             config = StudioConfig(preset=preset, padding=40, show_window_chrome=True, corner_radius=12)
             pil_img = StudioBeautifier.render(pil_img, config)
 
-        self._cached_processed_pixmap = ScreenGrabber.pil_to_pixmap(pil_img)
-        return self._cached_processed_pixmap
+        return ScreenGrabber.pil_to_pixmap(pil_img)
 
     def _on_redact_toggled(self, active: bool):
         self._is_redacted = active
@@ -298,10 +368,8 @@ class SnippingOverlay(QWidget):
             targets, _ = self._redaction_pipeline.detector.scan(pil_img)
             count = len(targets)
             self.toolbar.set_redact_active(True, count=count)
-            if count > 0:
-                self.toast.show_message(f"🛡️ Auto-redacted {count} secret(s)!", 2000)
-            else:
-                self.toast.show_message("ℹ️ No sensitive secrets detected", 2000)
+            msg = f"🛡️ Auto-redacted {count} secret(s)!" if count > 0 else "ℹ️ No sensitive secrets detected"
+            self.toast.show_message(msg, 2000)
         else:
             self.toolbar.set_redact_active(False)
             self.toast.show_message("🛡️ Redaction removed", 1500)
@@ -309,7 +377,6 @@ class SnippingOverlay(QWidget):
         self.update()
 
     def _on_beautify_cycle(self):
-        # Cycle through: Off (-1) -> 0 -> 1 -> ... -> len(PRESETS)-1 -> Off (-1)
         self._current_preset_idx += 1
         if self._current_preset_idx >= len(PRESETS):
             self._current_preset_idx = -1
@@ -326,8 +393,20 @@ class SnippingOverlay(QWidget):
 
         self.update()
 
+    def _on_annotation_tool_selected(self, tool: Optional[AnnotationType]):
+        self.active_anno_tool = tool
+        if tool is not None:
+            self.toast.show_message(f"✏️ Tool: {tool.value.capitalize()}", 1200)
+
+    def _undo_last_annotation(self):
+        if self.annotations:
+            removed = self.annotations.pop()
+            if removed.type == AnnotationType.STEP_NUMBER and self._step_counter > 1:
+                self._step_counter -= 1
+            self.toast.show_message("↩️ Undone", 1000)
+            self.update()
+
     def _on_ocr_clicked(self):
-        """Extracts text via RapidOCR directly to clipboard."""
         if self._redaction_pipeline is None:
             self._redaction_pipeline = RedactionPipeline()
 
@@ -335,18 +414,56 @@ class SnippingOverlay(QWidget):
         pil_img = ScreenGrabber.pixmap_to_pil(cropped)
 
         text = self._redaction_pipeline.copy_as_text(pil_img, redact_secrets=self._is_redacted)
-
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(text)
 
-        char_count = len(text)
-        self.toast.show_message(f"✓ Copied {char_count} characters to clipboard!", 2200)
+        self.toast.show_message(f"✓ Copied {len(text)} characters to clipboard!", 2200)
+
+    def _on_record_toggled(self, is_recording: bool):
+        if is_recording:
+            self.recorder.start(
+                target_rect=self.selection_rect,
+                fps=30,
+                output_format="gif",
+                auto_redact=self._is_redacted
+            )
+            self.toast.show_message("⏺ Recording started...", 1500)
+        else:
+            self.recorder.stop()
+            self.toast.show_message("⏳ Encoding recording...", 3000)
+
+    def _on_recorder_tick(self, seconds: int):
+        self.toolbar.update_record_timer(seconds)
+
+    def _on_recorder_finished(self, file_path: str, fmt: str):
+        self.toast.show_message(f"✓ Saved {fmt.upper()} to {file_path}", 2500)
+
+    def _on_recorder_failed(self, err: str):
+        self.toast.show_message(f"❌ Recording error: {err}", 3000)
+
+    def _on_upload_clicked(self):
+        """Asynchronously uploads image to Imgur or S3."""
+        pixmap = self._get_current_image()
+        pil_img = ScreenGrabber.pixmap_to_pil(pixmap)
+
+        self.toast.show_message("🚀 Uploading to Imgur...", 4000)
+
+        self._upload_worker = UploadWorker(pil_img, provider=UploadProvider.IMGUR)
+        self._upload_worker.upload_finished.connect(self._on_upload_finished)
+        self._upload_worker.start()
+
+    def _on_upload_finished(self, result: UploadResult):
+        if result.success:
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                clipboard.setText(result.url)
+            self.toast.show_message(f"✓ Link copied: {result.url}", 4000)
+        else:
+            self.toast.show_message(f"❌ Upload failed: {result.error_message}", 3500)
 
     def _on_save_clicked(self):
-        """Opens file dialog and saves current processed capture to disk."""
         pixmap = self._get_current_image()
-
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Screenshot",
@@ -368,42 +485,51 @@ class SnippingOverlay(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        # 1. Draw base frozen screenshot
+        # 1. Base frozen snapshot
         painter.drawPixmap(0, 0, self.virtual_pixmap)
 
-        # 2. Dim entire screen
+        # 2. Dim shroud
         dim_color = QColor(0, 0, 0, 110)
         painter.fillRect(self.rect(), dim_color)
 
         has_selection = self.selection_rect.isValid() and not self.selection_rect.isEmpty()
 
-        # 3. If there is a selection, cut out dim layer and draw preview
+        # 3. Selection cutout and preview
         if has_selection:
-            if self._is_redacted or self._current_preset_idx >= 0:
-                # Draw live processed pixmap
-                processed = self._get_current_image()
-                painter.drawPixmap(self.selection_rect, processed)
-            else:
-                # Draw original sharp screenshot
-                painter.drawPixmap(self.selection_rect, self.virtual_pixmap, self.selection_rect)
+            # Draw preview
+            painter.drawPixmap(self.selection_rect, self.virtual_pixmap, self.selection_rect)
 
-            # Draw outer CleanShot electric blue border
-            pen_blue = QPen(QColor(10, 132, 255), 2)  # #0A84FF
+            # Draw live annotations
+            if self.annotations:
+                AnnotationRenderer.render_with_qpainter(
+                    painter,
+                    self.annotations,
+                    origin_offset=(self.selection_rect.x(), self.selection_rect.y())
+                )
+
+            # Draw active in-progress annotation preview
+            if self.state == OverlayState.ANNOTATING and self._anno_start_pos is not None:
+                p1 = self._anno_start_pos
+                p2 = self.current_point
+                painter.setPen(QPen(QColor(255, 59, 48), 2, Qt.PenStyle.DashLine))
+                painter.drawLine(p1, p2)
+
+            # Outer border
+            pen_blue = QPen(QColor(10, 132, 255), 2)
             painter.setPen(pen_blue)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self.selection_rect)
 
             pen_inner = QPen(QColor(255, 255, 255, 140), 1)
-            inner_rect = self.selection_rect.adjusted(1, 1, -1, -1)
             painter.setPen(pen_inner)
-            painter.drawRect(inner_rect)
+            painter.drawRect(self.selection_rect.adjusted(1, 1, -1, -1))
 
             if self.state in (OverlayState.SELECTED, OverlayState.RESIZING, OverlayState.MOVING):
                 self._draw_handles(painter)
 
             self._draw_dimension_badge(painter)
 
-        # 4. Magnifier Loupe when dragging or ready
+        # 4. Magnifier loupe
         if self.state in (OverlayState.READY, OverlayState.DRAGGING):
             self._draw_loupe(painter, self.current_point)
 
@@ -513,12 +639,7 @@ class SnippingOverlay(QWidget):
         hex_color = pixel_color.name().upper()
 
         half_grid = self.LOUPE_GRID_SIZE // 2
-        sample_rect = QRect(
-            px - half_grid,
-            py - half_grid,
-            self.LOUPE_GRID_SIZE,
-            self.LOUPE_GRID_SIZE
-        )
+        sample_rect = QRect(px - half_grid, py - half_grid, self.LOUPE_GRID_SIZE, self.LOUPE_GRID_SIZE)
         sample_qimg = self._cached_qimage.copy(sample_rect)
 
         scaled_pixmap = QPixmap.fromImage(
@@ -588,13 +709,11 @@ class SnippingOverlay(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(container_path)
 
-    # --------------------------------------------------------------------------
-    # Actions
-    # --------------------------------------------------------------------------
-
     def _reset_selection(self):
         self.state = OverlayState.READY
         self.selection_rect = QRect()
+        self.annotations.clear()
+        self._step_counter = 1
         self._cached_processed_pixmap = None
         self.toolbar.hide()
         self.setCursor(Qt.CursorShape.CrossCursor)

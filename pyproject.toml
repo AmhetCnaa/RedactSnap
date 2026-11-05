@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "redactsnap"
-version = "0.1.0"
-description = "Privacy-first open-source desktop screenshot autopilot with automatic secret redaction, offline OCR, and social canvas beautification."
+version = "0.5.0"
+description = "Privacy-first open-source desktop screenshot autopilot with automatic secret redaction, offline OCR, social canvas beautification, annotations, recording, and scrolling capture."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -19,6 +19,7 @@ dependencies = [
     "numpy>=1.26.0",
     "opencv-python>=4.8.0",
     "pynput>=1.7.6",
+    "imageio>=2.30.0",
 ]
 
 [project.optional-dependencies]
@@ -28,8 +29,12 @@ ocr-rapid = [
 ocr-tesseract = [
     "pytesseract>=0.3.10",
 ]
+uploader = [
+    "requests>=2.31.0",
+]
 dev = [
     "pytest>=8.0.0",
+    "pyinstaller>=6.0.0",
     "black>=24.0.0",
 ]
 

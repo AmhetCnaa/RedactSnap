@@ -1,0 +1,64 @@
+name: Release Standalone Windows Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Standalone Windows .exe
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          uv pip install --system -e ".[ocr-rapid,uploader,dev]"
+
+      - name: Run Test Suite
+        run: |
+          pytest -v
+
+      - name: Build Standalone Executable with PyInstaller
+        run: |
+          python scripts/build_exe.py
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: RedactSnap-Windows-Executable
+          path: dist/*.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: "RedactSnap ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: dist/*.exe
+          body: |
+            ## 📸 RedactSnap ${{ github.ref_name }} Release
+
+            ### ✨ Highlights in this release:
+            - **Smart Vector Annotations:** Step numbers (①, ②, ③), vector arrows, highlighters, rectangles, and spotlight dimming.
+            - **Live Screen Recording:** Capture active regions to optimized animated `.gif` or `.mp4` with a real-time mini timer.
+            - **Scrolling Screenshot:** Seamless vertical stitching for long web pages and code blocks.
+            - **Zero-Server Link Sharing:** 1-click anonymous Imgur and S3/R2 bucket sharing.
+            - **Standalone Portable .exe:** Zero Python setup required! Download and run `RedactSnap-v0.5.0-x64.exe` directly on Windows.
