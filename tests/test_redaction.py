@@ -151,6 +151,9 @@ def test_patterns_passwords_multilingual_and_masked():
     samples_kw = [
         ("sifre: Gizli123!", "Gizli123!"),
         ("şifre: 123456", "123456"),
+        ("şifre;876567889", "876567889"),
+        ("password;secret_pass1", "secret_pass1"),
+        ("parola; 12345678", "12345678"),
         ("parola: MySecretPassword", "MySecretPassword"),
         ("password: admin", "admin"),
         ("pass: Secret_99!", "Secret_99!"),
@@ -175,8 +178,19 @@ def test_entropy_standalone_passwords():
         is_sec, score, reason = EntropyAnalyzer.is_secret_candidate(pwd)
         assert is_sec is True, f"Failed to detect password: {pwd}"
 
-    # Normal camelCase, product names and words should NOT be flagged
-    normal_words = ["RedactSnap", "Windows11", "CleanShot", "Development"]
+    # Normal chat headers, usernames, timestamps and product words should NOT be flagged
+    normal_words = [
+        "RedactSnap",
+        "Windows11",
+        "CleanShot",
+        "Development",
+        "User1234",
+        "Project2024",
+        "Channel2025",
+        "Ahmet1988",
+        "Sprint42",
+        "2024-11-05 14:30",
+    ]
     for word in normal_words:
         is_sec, score, reason = EntropyAnalyzer.is_secret_candidate(word)
         assert is_sec is False, f"False positive on word: {word}"

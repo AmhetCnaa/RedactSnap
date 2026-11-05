@@ -12,10 +12,12 @@ Combines:
 
 from enum import Enum, auto
 from typing import Optional, Tuple, List
+from pathlib import Path
+from datetime import datetime
 from PIL import Image
 
 from PyQt6.QtWidgets import QWidget, QApplication, QFileDialog
-from PyQt6.QtCore import Qt, QRect, QPoint, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, QPoint, QSize, pyqtSignal, QTimer
 from PyQt6.QtGui import (
     QPainter,
     QColor,
@@ -95,7 +97,7 @@ class SnippingOverlay(QWidget):
         self._cached_qimage = self.virtual_pixmap.toImage()
 
         # Live transformation state & multi-tier caching (60 FPS smooth)
-        self._is_redacted = True
+        self._is_redacted = False
         self._current_preset_idx = -1
         self._redaction_pipeline: Optional[RedactionPipeline] = None
 
@@ -556,22 +558,51 @@ class SnippingOverlay(QWidget):
         else:
             self.toast.show_message(f"❌ Upload failed: {result.error_message}", 3500)
 
-    def _on_save_clicked(self):
+    @staticmethod
+    def get_default_screenshots_dir() -> Path:
+        """Locates or creates the standard user Screenshots directory (Pictures/Screenshots)."""
+        pictures = Path.home() / "Pictures"
+        screenshots_dir = pictures / "Screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        return screenshots_dir
+
+    def _auto_save_and_confirm(self):
+        """
+        Instant Auto-Save: Saves to Pictures/Screenshots/RedactSnap_YYYYMMDD_HHMMSS.png,
+        simultaneously copies to system clipboard, emits confirmed signal, and closes overlay.
+        Matches Windows Snipping Tool / CleanShot X standard.
+        """
         if self._is_scanning and self._is_redacted and self._redaction_worker is not None:
             self._redaction_worker.wait(1200)
 
-        pixmap = self._get_current_image()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Screenshot",
-            "screenshot.png",
-            "PNG Image (*.png);;JPEG Image (*.jpg);;WebP Image (*.webp)"
-        )
-        if file_path:
-            pixmap.save(file_path)
-            self.toast.show_message(f"✓ Saved to {file_path}", 2000)
-            self.confirmed.emit(pixmap, self.selection_rect)
-            self.close()
+        final_pixmap = self._get_current_image()
+
+        # 1. Instant Auto-save to Pictures/Screenshots
+        saved_path = None
+        try:
+            screenshots_dir = self.get_default_screenshots_dir()
+            now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            target_file = screenshots_dir / f"RedactSnap_{now_str}.png"
+            if target_file.exists():
+                target_file = screenshots_dir / f"RedactSnap_{now_str}_{datetime.now().microsecond // 1000:03d}.png"
+            final_pixmap.save(str(target_file), "PNG")
+            saved_path = str(target_file)
+            print(f"[RedactSnap] Saved screenshot to: {saved_path}")
+        except Exception as e:
+            print(f"[RedactSnap] Warning: Could not auto-save to Screenshots: {e}")
+
+        # 2. Copy to clipboard
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setPixmap(final_pixmap)
+
+        # 3. Toast HUD & Close
+        self.toast.show_message("✓ Saved to Screenshots & Copied!", 2000)
+        self.confirmed.emit(final_pixmap, self.selection_rect)
+        self.close()
+
+    def _on_save_clicked(self):
+        self._auto_save_and_confirm()
 
     # --------------------------------------------------------------------------
     # Paint Pipeline
@@ -825,15 +856,7 @@ class SnippingOverlay(QWidget):
         self.update()
 
     def _confirm_to_clipboard(self):
-        if self._is_scanning and self._is_redacted and self._redaction_worker is not None:
-            self._redaction_worker.wait(1200)
-
-        final_pixmap = self._get_current_image()
-        clipboard = QApplication.clipboard()
-        if clipboard:
-            clipboard.setPixmap(final_pixmap)
-        self.confirmed.emit(final_pixmap, self.selection_rect)
-        self.close()
+        self._auto_save_and_confirm()
 
     def _cancel(self):
         self._abort_active_redaction_scan()

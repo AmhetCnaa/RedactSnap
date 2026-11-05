@@ -47,10 +47,10 @@ def test_floating_toolbar_actions(qapp):
     toolbar.btn_copy.click()
     assert len(copy_called) == 1
 
-    # Since redact is enabled by default, clicking it toggles it to False
+    # Since redact is disabled by default (opt-in), clicking it toggles it to True
     toolbar.btn_redact.click()
     assert len(redact_called) == 1
-    assert redact_called[0] is False
+    assert redact_called[0] is True
 
     toolbar.btn_beautify.click()
     assert len(beautify_called) == 1
@@ -72,6 +72,15 @@ def test_toolbar_anchoring(qapp):
     assert toolbar.x() == expected_x
     # Toolbar should be below selection
     assert toolbar.y() == selection.bottom() + 14
+
+    # Test full-screen selection (must NEVER clip or be off-screen):
+    fullscreen_selection = QRect(0, 0, 1920, 1080)
+    toolbar.anchor_to_selection(fullscreen_selection, bounds)
+    assert toolbar.x() >= 12
+    assert toolbar.x() + toolbar.width() <= bounds.width()
+    assert toolbar.y() >= 12
+    assert toolbar.y() + toolbar.height() <= bounds.height()
+    assert toolbar.isVisible()
 
 
 def test_tray_icon_generation(qapp):

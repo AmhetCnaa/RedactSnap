@@ -123,3 +123,8 @@ def test_overlay_mouse_and_keyboard_interaction(qapp):
     assert cropped_pix.width() == 201
     assert cropped_pix.height() == 101
     assert confirmed_rect == QRect(61, 50, 201, 101)
+
+    # Verify screenshots directory exists
+    screenshots_dir = overlay.get_default_screenshots_dir()
+    assert screenshots_dir.exists()
+    assert screenshots_dir.is_dir()

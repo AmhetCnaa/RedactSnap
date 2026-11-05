@@ -38,14 +38,14 @@ class FloatingToolbar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
-        self._is_redacted = True
+        self._is_redacted = False
         self._current_preset_name = "Off"
         self._is_recording = False
         self._active_annotation_tool: Optional[AnnotationType] = None
         self._show_annotation_subbar = False
 
         self._init_ui()
-        self.set_redact_active(True)
+        self.set_redact_active(False)
 
     def _init_ui(self):
         root_layout = QVBoxLayout(self)
@@ -288,13 +288,31 @@ class FloatingToolbar(QWidget):
         w = self.width()
         h = self.height()
 
+        # 1. Horizontal positioning: center on selection, clamped strictly inside bounds
         cx = selection_rect.center().x()
         x = cx - (w // 2)
-        x = max(10, min(x, bounds_rect.width() - w - 10))
+        max_x = max(12, bounds_rect.width() - w - 12)
+        x = max(12, min(x, max_x))
 
-        y = selection_rect.bottom() + 14
-        if y + h > bounds_rect.height() - 10:
-            y = selection_rect.top() - h - 14
+        # 2. Vertical positioning:
+        y_below = selection_rect.bottom() + 14
+        y_above = selection_rect.top() - h - 14
+
+        if y_below + h <= bounds_rect.height() - 12:
+            y = y_below
+        elif y_above >= 12:
+            y = y_above
+        else:
+            # Full-screen or edge selection where neither above nor below fits without clipping:
+            # Anchor inside selection near top-center, or pin to top (y = 12)
+            if selection_rect.height() >= h + 30:
+                y = max(12, selection_rect.top() + 14)
+            else:
+                y = 12
+
+        # Final safety clamp: guarantee 100% within screen bounds
+        max_y = max(12, bounds_rect.height() - h - 12)
+        y = max(12, min(y, max_y))
 
         self.move(x, y)
         self.show()

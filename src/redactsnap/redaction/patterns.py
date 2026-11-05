@@ -140,7 +140,7 @@ PATTERNS: List[SecretPattern] = [
     SecretPattern(
         name="Password / Secret with Keyword",
         category="PASSWORD",
-        regex=r"(?i)\b(?:password|passwd|pass|pwd|şifre|sifre|parola|pin|gizli|secret|api_key|apikey|auth_token|bearer)\b\s*[:=.\s-]*\s*[\"']?([^\s\"']{3,})[\"']?"
+        regex=r"(?i)(?:\b(?:password|passwd|pass|pwd|şifre|sifre|parola|pin|gizli|secret|api_key|apikey|auth_token|bearer)\b)[:;=.\s-]+\s*[\"']?([^\s\"';]{3,})[\"']?"
     ),
     SecretPattern(
         name="Masked Password Input",
@@ -153,18 +153,18 @@ PATTERNS: List[SecretPattern] = [
     # --------------------------------------------------------------------------
     # 1. Contextual & Prefixed Turkish ID:
     # Tolerant to OCR confusions ('tc', 'te', 'tr', 't', 'tckn', 'tcno', 'kimlik', 'id', 'no')
-    # and handles internal spaces/dashes (e.g. '490 12345678', 'te49012345678', 'tc: 490 123 45 67')
+    # and handles internal single space (e.g. '490 12345678', 'te49012345678', 'tc: 49012345678')
     SecretPattern(
         name="Contextual Turkish ID (TCKN)",
         category="PII",
-        regex=r"(?i)(?:t\.?\s*c\.?|tc|te|tr|tckn|tcno|kimlik|vatanda[sş]l[iı]k|id|no|t)?[:=.\s-]*((?<![0-9])[0-9](?:[\s.-]*[0-9]){9,10}(?![0-9]))"
+        regex=r"(?i)(?:t\.?\s*c\.?|tc|te|tr|tckn|tcno|kimlik|vatanda[sş]l[iı]k|id|no|t)?[:;=.\s-]*([0-9]{10,11}|[0-9]{3,4}\s[0-9]{7,8})"
     ),
     # 2. Standalone 10-11 Consecutive Digit Sequence:
     # Any standalone 10 or 11 digits on screen (National ID, Phone, sensitive account number)
     SecretPattern(
         name="Sensitive 10-11 Digit Number",
         category="PII",
-        regex=r"(?<![0-9])([0-9](?:[\s.-]*[0-9]){9,10})(?![0-9])"
+        regex=r"(?<![0-9])([0-9]{10,11}|[0-9]{3,4}\s[0-9]{7,8})(?![0-9])"
     ),
     # 3. Mathematical TCKN: Standalone 11-digit number strictly validated by official checksum algorithm
     SecretPattern(

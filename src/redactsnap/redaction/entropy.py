@@ -101,10 +101,10 @@ class EntropyAnalyzer:
                 return True, entropy, "High-entropy Base64 token"
 
         # 4. Typical Standalone Password Pattern (8-15 chars, mixed classes e.g. Admin123!, P@ssw0rd99)
+        # Requires at least one special character to avoid false positives on usernames/headers like Project2024
         if 8 <= length < 16:
-            if has_digit and ((has_lower and has_upper) or has_special):
-                if char_classes >= 3 and (has_special or entropy >= 3.0):
-                    return True, entropy, f"Password-like token (classes={char_classes}, H={entropy:.2f})"
+            if has_digit and has_special and (has_lower or has_upper) and char_classes >= 3:
+                return True, entropy, f"Password-like token (classes={char_classes}, H={entropy:.2f})"
 
         return False, entropy, "Normal text distribution"
 
